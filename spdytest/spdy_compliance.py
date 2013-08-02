@@ -6,6 +6,7 @@ import json
 import logging
 import multiprocessing
 import time
+import functools
 
 import thor
 from thor.spdy import error
@@ -63,26 +64,35 @@ class TestRunner(object):
             self.settings = json.load(f)
         self.log = setup_logging()
         self.frame_buff = list()
-    
-    def on_frame(self, frame):  
-        self.frame_buff.append(frame)
-        self.log.info(wrap(Colors.YELLOW, str(frame))) 
         
-    def on_error(self, error):
-        self.log.info(wrap(Colors.RED, str(error))) 
+    def setup_session(self, session):
+        session.frame_buff = list()
     
-    def on_bound(self, tcp_conn):
-        self.log.info(wrap(Colors.BOLD, 'BOUND %s' % tcp_conn))
+        @thor.on(session, 'frame')
+        def on_frame(frame):  
+            session.frame_buff.append(frame)
+            self.log.info(wrap(Colors.YELLOW, str(frame))) 
+            
+        @thor.on(session, 'error')
+        def on_error(error):
+            self.log.info(wrap(Colors.RED, str(error))) 
         
-    def on_goaway(self, reason, last_stream_id):
-        self.log.info(wrap(Colors.BOLD, 'GOAWAY %s LSID%d' % 
-            (GoawayReasons.str[reason], last_stream_id)))
-    
-    def on_pause(self, paused):
-        self.log.info(wrap(Colors.BOLD, 'PAUSE %s' % paused))
+        @thor.on(session, 'bound')
+        def on_bound(tcp_conn):
+            self.log.info(wrap(Colors.BOLD, 'BOUND %s' % tcp_conn))
+            
+        @thor.on(session, 'goaway')
+        def on_goaway(reason, last_stream_id):
+            self.log.info(wrap(Colors.BOLD, 'GOAWAY %s LSID%d' % 
+                (GoawayReasons.str[reason], last_stream_id)))
         
-    def on_close(self):
-        self.log.info(wrap(Colors.BOLD, 'CLOSED'))
+        @thor.on(session, 'pause')
+        def on_pause(paused):
+            self.log.info(wrap(Colors.BOLD, 'PAUSE %s' % paused))
+            
+        @thor.on(session, 'close')
+        def on_close():
+            self.log.info(wrap(Colors.BOLD, 'CLOSED'))
     
     
 class ServerTestRunner(TestRunner):
@@ -110,13 +120,8 @@ class ServerTestRunner(TestRunner):
     
     def on_session(self, session):
         self.log.info(wrap(Colors.BOLD, 'SESSION %s' % session))
+        self.setup_session(session)
         session.on('exchange', self.on_exchange)
-        session.on('frame', self.on_frame)
-        session.on('error', self.on_error)
-        session.on('bound', self.on_bound)
-        session.on('pause', self.on_pause)
-        session.on('close', self.on_close)
-        session.on('goaway', self.on_goaway)
     
     def on_exchange(self, exchange):
         self.log.info(wrap(Colors.GREEN, 'NEW REQ %s' % exchange))
@@ -167,12 +172,7 @@ class ClientTestRunner(TestRunner):
         for entry in self.settings['client_urls']:
             session = self.client.session((entry['host'], entry['port']))
             self.log.info(wrap(Colors.BOLD, 'SESSION %s' % session))
-            session.on('frame', self.on_frame)
-            session.on('error', self.on_error)
-            session.on('bound', self.on_bound)
-            session.on('pause', self.on_pause)
-            session.on('close', self.on_close)
-            session.on('goaway', self.on_goaway)
+            self.setup_session(session)
             for url in  entry['urls']:
                 self.do_request(session, url[0], url[1])
         try:
