@@ -10,9 +10,8 @@ import functools
 
 import thor
 from thor.spdy import error
-from thor.spdy.frames import *
-from thor.spdy.client import SpdyClient
-from thor.spdy.server import SpdyServer
+from thor.spdy import frames
+from thor.spdy.frames import enum
 
 
 # TerminalColorEscapes contains strings that, when printed to a terminal, will
@@ -100,7 +99,7 @@ class ServerTestRunner(TestRunner):
         TestRunner.__init__(self, settings_file)
         self.log.info(wrap(Colors.RED, 'ServerRunner PID: %s' % os.getpid()))
         self.cache = FileCache(self.settings['server_webroot'])
-        self.server = SpdyServer(
+        self.server = thor.SpdyServer(
             host=self.settings['server_host'],
             port=self.settings['server_port'],
             idle_timeout=self.settings['connection_idle_timeout'])
@@ -124,7 +123,7 @@ class ServerTestRunner(TestRunner):
         session.on('exchange', self.on_exchange)
     
     def on_exchange(self, exchange):
-        self.log.info(wrap(Colors.GREEN, 'NEW REQ %s' % exchange))
+        self.log.info(wrap(Colors.GREEN, 'NEW EXCHG %s' % exchange))
         
         @thor.on(exchange, 'error')
         def on_error(error):
@@ -165,7 +164,7 @@ class ClientTestRunner(TestRunner):
     def __init__(self, settings_file):
         TestRunner.__init__(self, settings_file)
         self.log.info(wrap(Colors.RED, 'ClientRunner PID: %s' % os.getpid()))
-        self.client = SpdyClient(
+        self.client = thor.SpdyClient(
             connect_timeout=self.settings['client_connect_timeout'],
             read_timeout=self.settings['http_response_timeout'],
             idle_timeout=self.settings['connection_idle_timeout'])
@@ -182,7 +181,7 @@ class ClientTestRunner(TestRunner):
         
     def do_request(self, session, method, uri):
         exchange = session.exchange()
-        self.log.info(wrap(Colors.GREEN, 'NEW REQ %s' % exchange))
+        self.log.info(wrap(Colors.GREEN, 'NEW EXCHG %s' % exchange))
         self.setup_exchange(exchange)
         exchange.request_start(method, uri, None, True)
         
@@ -219,7 +218,7 @@ class ClientTestRunner(TestRunner):
         
         @thor.on(exchange, 'pushed_response')
         def on_pushed_response(pushed_exchange):
-            self.log.info(wrap(Colors.GREEN, 'PUSHED RES %s' % pushed_exchange))
+            self.log.info(wrap(Colors.GREEN, 'PUSHED EXCHG %s' % pushed_exchange))
             self.setup_exchange(pushed_exchange)
         
 #-------------------------------------------------------------------------------
