@@ -94,7 +94,6 @@ class ServerTestRunner(TestRunner):
             host=self.settings['server_host'],
             port=self.settings['server_port'],
             idle_timeout=self.settings['connection_idle_timeout'])
-        self.server.on('exchange', self.on_exchange)
         self.server.on('session', self.on_session)
         self.server.on('start', self.on_start)
         self.server.on('stop', self.on_stop)
@@ -111,6 +110,7 @@ class ServerTestRunner(TestRunner):
     
     def on_session(self, session):
         self.log.info(wrap(Colors.BOLD, 'SESSION %s' % session))
+        session.on('exchange', self.on_exchange)
         session.on('frame', self.on_frame)
         session.on('error', self.on_error)
         session.on('bound', self.on_bound)
@@ -164,23 +164,24 @@ class ClientTestRunner(TestRunner):
             connect_timeout=self.settings['client_connect_timeout'],
             read_timeout=self.settings['http_response_timeout'],
             idle_timeout=self.settings['connection_idle_timeout'])
-        session = self.client.session(('localhost', 10000)) # FIXME: figure this out
-        self.log.info(wrap(Colors.BOLD, 'SESSION %s' % session))
-        session.on('frame', self.on_frame)
-        session.on('error', self.on_error)
-        session.on('bound', self.on_bound)
-        session.on('pause', self.on_pause)
-        session.on('close', self.on_close)
-        session.on('goaway', self.on_goaway)
         for entry in self.settings['client_urls']:
-            self.do_request(entry[0], entry[1])
+            session = self.client.session((entry['host'], entry['port']))
+            self.log.info(wrap(Colors.BOLD, 'SESSION %s' % session))
+            session.on('frame', self.on_frame)
+            session.on('error', self.on_error)
+            session.on('bound', self.on_bound)
+            session.on('pause', self.on_pause)
+            session.on('close', self.on_close)
+            session.on('goaway', self.on_goaway)
+            for url in  entry['urls']:
+                self.do_request(session, url[0], url[1])
         try:
             thor.run()
         except KeyboardInterrupt:
             pass
         
-    def do_request(self, method, uri):
-        exchange = self.client.exchange()
+    def do_request(self, session, method, uri):
+        exchange = session.exchange()
         self.log.info(wrap(Colors.GREEN, 'NEW REQ %s' % exchange))
         self.setup_exchange(exchange)
         exchange.request_start(method, uri, None, True)

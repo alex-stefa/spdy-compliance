@@ -6,8 +6,14 @@
     "server_port": 10000,
     "server_webroot": "www",
     "client_urls": [
-        ["GET", "http://localhost:10000/spec.htm"],
-        ["GET", "http://localhost:10000/spdy_compliance.go"]
+        {
+            "host": "localhost",
+            "port": 10000,
+            "urls": [
+                ["GET", "http://localhost:10000/spec.htm"],
+                ["GET", "http://localhost:10000/spdy_compliance.go"]
+            ]
+        }
     ],
     "server_push_map": {
         "spec.htm": ["logo.png"],
