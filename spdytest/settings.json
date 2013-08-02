@@ -1,0 +1,16 @@
+{
+    "client_connect_timeout": 7,
+    "connection_idle_timeout": 10,
+    "http_response_timeout": null,
+    "server_host": "localhost",
+    "server_port": 10000,
+    "server_webroot": "www",
+    "client_urls": [
+        ["GET", "http://localhost:10000/spec.htm"],
+        ["GET", "http://localhost:10000/spdy_compliance.go"]
+    ],
+    "server_push_map": {
+        "spec.htm": ["logo.png"],
+        "spdy_compliance.go": []
+    }
+}
