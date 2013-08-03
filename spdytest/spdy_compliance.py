@@ -102,21 +102,15 @@ class ServerTestRunner(TestRunner):
         self.server = thor.SpdyServer(
             host=self.settings['server_host'],
             port=self.settings['server_port'],
-            idle_timeout=self.settings['connection_idle_timeout'])
+            idle_timeout=self.settings['connection_idle_timeout'],
+            loop=thor.loop.make())
+        self.log.info(wrap(Colors.BOLD, 'LISTENING'))
         self.server.on('session', self.on_session)
-        self.server.on('start', self.on_start)
-        self.server.on('stop', self.on_stop)
         try:
-            thor.run()
+            self.server._loop.run()
         except KeyboardInterrupt:
             pass
         
-    def on_start(self):
-        self.log.info(wrap(Colors.BOLD, 'START'))
-
-    def on_stop(self):
-        self.log.info(wrap(Colors.BOLD, 'STOP'))
-    
     def on_session(self, session):
         self.log.info(wrap(Colors.BOLD, 'SESSION %s' % session))
         self.setup_session(session)
@@ -167,7 +161,8 @@ class ClientTestRunner(TestRunner):
         self.client = thor.SpdyClient(
             connect_timeout=self.settings['client_connect_timeout'],
             read_timeout=self.settings['http_response_timeout'],
-            idle_timeout=self.settings['connection_idle_timeout'])
+            idle_timeout=self.settings['connection_idle_timeout'],
+            loop=thor.loop.make())
         for entry in self.settings['client_urls']:
             session = self.client.session((entry['host'], entry['port']))
             self.log.info(wrap(Colors.BOLD, 'SESSION %s' % session))
@@ -175,7 +170,7 @@ class ClientTestRunner(TestRunner):
             for url in  entry['urls']:
                 self.do_request(session, url[0], url[1])
         try:
-            thor.run()
+            self.client._loop.run()
         except KeyboardInterrupt:
             pass
         
@@ -227,18 +222,18 @@ if __name__ == "__main__":
     ps = multiprocessing.Process(
         target=ServerTestRunner, 
         args=('settings.json',),
-        name='ServerTestRunner')
+        name='SERVER')
     ps.start()
     time.sleep(2) # leave a little time to set up server socket
     pc = multiprocessing.Process(
         target=ClientTestRunner, 
         args=('settings.json',),
-        name='ClientTestRunner')
+        name='CLIENT')
     pc.start()
     try:
         ps.join()
         pc.join()
     except KeyboardInterrupt:
         pass
-        
+
         
