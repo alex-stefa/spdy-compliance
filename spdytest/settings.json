@@ -1,17 +1,21 @@
 {
+    "mode": "mixed",
     "client_connect_timeout": 7,
     "connection_idle_timeout": 10,
     "http_response_timeout": null,
-    "server_host": "127.0.0.1",
+    "server_host": "10.0.2.15",
     "server_port": 10000,
     "server_webroot": "www",
+    "server_alternate_protocol": null,
+    "server_alternate_protocol_": [9999, "npn-spdy/3"],
+    "client_count": 2,
     "client_urls": [
         {
-            "host": "127.0.0.1",
+            "host": "10.0.2.15",
             "port": 10000,
             "urls": [
-                ["GET", "http://localhost:10000/spec.htm", [], ""],
-                ["GET", "http://localhost:10000/spdy_compliance.go", [], ""]
+                ["GET", "http://localhost:10000/spec.htm", [], null],
+                ["GET", "http://localhost:10000/spdy_compliance.go", [], null]
             ]
         }
     ],

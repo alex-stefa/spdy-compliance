@@ -76,13 +76,78 @@ class FileCache(object):
 
 #-------------------------------------------------------------------------------
 
-class TestRunner(object):
-    def __init__(self, settings_file='settings.json'):
-        with open(settings_file, 'r') as f:
-            self.settings = json.load(f)
+class SpdyAdvertiser(multiprocessing.Process):
+    """
+    Server which listens to normal HTTP requests and replies with
+    Alternate-Protocol header to advertise SPDY capability.
+    
+    Note: the advertised SPDY port must require admin rights to be 
+        opened, otherwise Chrome ignores the Alternate-Protocol mapping
+        (see: http://code.google.com/p/chromium/issues/detail?id=93351 )
+    """
+    def __init__(self, settings, name='SPDY-ADV'):
+        multiprocessing.Process.__init__(self, name=name)
+        self.settings = settings
+        
+    def setup(self):
         self.format = setup_formatter(True, setup_logger())
+        self.format.status('SpdyAdvertiser PID: %s' % os.getpid())
+        self.loop = thor.loop.make()
+        self.adv_server = thor.HttpServer(
+            host=self.settings['server_host'],
+            port=self.settings['server_alternate_protocol'][0],
+            loop=self.loop)
+        adv_value = '%d:%s' % (
+            self.settings['server_port'], 
+            self.settings['server_alternate_protocol'][1])
+        self.format.status('Alternate-Protocol: %s advertised on %s:%d' % (
+            adv_value,
+            self.settings['server_host'],
+            self.settings['server_alternate_protocol'][0]))
+        
+        def adv_handler(exchange):
+            @thor.on(exchange, 'request_start')
+            def advertise(method, uri, req_hdrs):
+                self.format.notify('Alternate-Protocol announce: %s %s' % 
+                    (method, uri))
+                exchange.response_start(501, 'Not Implemented', [
+                    ('Alternate-Protocol', adv_value), 
+                    ('Content-Length', '0'),
+                    ('Connection', 'close')])
+                exchange.response_done([])
+            
+        self.adv_server.on('exchange', adv_handler)
+    
+    def run(self):
+        self.setup()
+        try:
+            self.loop.run()
+        except KeyboardInterrupt:
+            self.adv_server.shutdown()
+
+#-------------------------------------------------------------------------------
+    
+class TestRunner(multiprocessing.Process):
+    def __init__(self, settings, name=None):
+        multiprocessing.Process.__init__(self, name=name)
+        self.settings = settings
+        
+    def _setup(self):
+        self.format = setup_formatter(True, setup_logger())
+        self.loop = thor.loop.make()
         self.frame_buff = list()
         
+    def setup(self):
+        pass
+        
+    def run(self):
+        self._setup()
+        self.setup()
+        try:
+            self.loop.run()
+        except KeyboardInterrupt:
+            pass
+            
     def setup_session(self, session):
         session.frame_buff = list()
     
@@ -119,27 +184,31 @@ class TestRunner(object):
     
     
 class ServerTestRunner(TestRunner):
-    def __init__(self, settings_file):
-        TestRunner.__init__(self, settings_file)
+    def __init__(self, settings, name='SERVER'):
+        TestRunner.__init__(self, settings, name)
+        if self.settings['server_alternate_protocol'] is not None:
+            self.padv = SpdyAdvertiser(self.settings)
+            self.padv.start()   
+        
+    def setup(self):
         self.format.status('ServerRunner PID: %s' % os.getpid())
+        if self.settings['server_alternate_protocol'] is None:
+            self.format.status('Alternate-Protocol disabled')
         self.cache = FileCache(self.settings['server_webroot'])
         self.server = thor.SpdyServer(
             host=self.settings['server_host'],
             port=self.settings['server_port'],
             idle_timeout=self.settings['connection_idle_timeout'],
-            loop=thor.loop.make())
+            loop=self.loop)
         self.format.status('LISTENING AT %s:%d' %
             (self.server._host, self.server._port))
         self.server.on('session', self.on_session)
-        try:
-            self.server._loop.run()
-        except KeyboardInterrupt:
-            pass
-        
+
     def on_session(self, session):
         self.format.session('SESSION NEW %s' % session)
         self.setup_session(session)
         session.on('exchange', self.on_exchange)
+        #session.ping_timer().ping()
     
     def on_exchange(self, exchange):
         self.format.exchange('EXCHG NEW %s' % exchange)
@@ -183,24 +252,22 @@ class ServerTestRunner(TestRunner):
         
             
 class ClientTestRunner(TestRunner):
-    def __init__(self, settings_file):
-        TestRunner.__init__(self, settings_file)
+    def __init__(self, settings, name='CLIENT'):
+        TestRunner.__init__(self, settings, name)
+        
+    def setup(self):
         self.format.status('ClientRunner PID: %s' % os.getpid())
         self.client = thor.SpdyClient(
             connect_timeout=self.settings['client_connect_timeout'],
             read_timeout=self.settings['http_response_timeout'],
             idle_timeout=self.settings['connection_idle_timeout'],
-            loop=thor.loop.make())
+            loop=self.loop)
         for entry in self.settings['client_urls']:
             session = self.client.session((entry['host'], entry['port']))
             self.format.session('SESSION NEW %s' % session)
             self.setup_session(session)
             for url in  entry['urls']:
                 self.do_request(session, url[0], url[1], url[2], url[3])
-        try:
-            self.client._loop.run()
-        except KeyboardInterrupt:
-            pass
         
     def do_request(self, session, method, uri, headers, body):
         exchange = session.exchange()
@@ -249,20 +316,26 @@ class ClientTestRunner(TestRunner):
 #-------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    ps = multiprocessing.Process(
-        target=ServerTestRunner, 
-        args=('settings.json',),
-        name='SERVER')
-    ps.start()
-    time.sleep(2) # leave a little time to set up server socket
-    pc = multiprocessing.Process(
-        target=ClientTestRunner, 
-        args=('settings.json',),
-        name='CLIENT')
-    pc.start()
     try:
-        ps.join()
-        pc.join()
+        settings_file = sys.argv[1]
+    except IndexError:
+        settings_file = 'settings.json'
+    with open(settings_file, 'r') as f:
+        settings = json.load(f)
+    procs = list()
+    if settings['mode'] in ['server', 'mixed']:
+        p = ServerTestRunner(settings)
+        procs.append(p)
+        p.start()
+        time.sleep(2) # leave a little time to set up server socket
+    if settings['mode'] in ['client', 'mixed']:
+        for i in range(settings['client_count']):
+            p = ClientTestRunner(settings, 'CLIENT-%d' % i)
+            procs.append(p)
+            p.start()
+    try:
+        for p in procs:
+            p.join()
     except KeyboardInterrupt:
         pass
 
