@@ -6,8 +6,7 @@
     "server_host": "10.0.2.15",
     "server_port": 10000,
     "server_webroot": "www",
-    "server_alternate_protocol": null,
-    "server_alternate_protocol_": [9999, "npn-spdy/3"],
+    "server_alternate_protocol": [9999, "npn-spdy/3"],
     "client_count": 2,
     "client_urls": [
         {
