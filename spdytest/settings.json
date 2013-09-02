@@ -1,13 +1,17 @@
 {
     "mode": "mixed",
-    "client_connect_timeout": 7,
     "connection_idle_timeout": 10,
-    "http_response_timeout": null,
     "server_host": "127.0.0.1",
     "server_port": 10000,
     "server_webroot": "www",
+    "server_proxy": true,
+    "server_cache": 32,
     "server_alternate_protocol": [9999, "npn-spdy/3"],
+    "server_use_tls": true,
     "client_count": 2,
+    "client_connect_timeout": 7,
+    "client_http_response_timeout": null,
+    "client_use_tls": true,
     "client_urls": [
         {
             "host": "127.0.0.1",
@@ -21,5 +25,12 @@
     "server_push_map": {
         "spec.htm": ["logo.png"],
         "spdy_compliance.go": []
+    },
+    "tls_config": {
+        "keyfile": "key.pem",
+        "certfile": "cert.pem",
+        "cafile": null,
+        "capath": null,
+        "npn_prot": ["spdy/3"]
     }
 }

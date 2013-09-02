@@ -49,6 +49,15 @@ def setup_formatter(use_colors, logger):
         session = functools.partial(_wrapper, logging.INFO, Colors.GREEN),
         status = functools.partial(_wrapper, logging.INFO, Colors.BOLD),
         notify = functools.partial(_wrapper, logging.INFO, Colors.BLUE))
+        
+def setup_tls_config(settings):
+    tls_config = settings['tls_config']
+    return thor.TlsConfig(
+        keyfile=tls_config['keyfile'],
+        certfile=tls_config['certfile'],
+        cafile=tls_config['cafile'],
+        capath=tls_config['capath'],
+        npn_prot=tls_config['npn_prot'])
     
 #-------------------------------------------------------------------------------
 
@@ -131,6 +140,7 @@ class TestRunner(multiprocessing.Process):
     def __init__(self, settings, name=None):
         multiprocessing.Process.__init__(self, name=name)
         self.settings = settings
+        self.tls_config = None
         
     def _setup(self):
         self.format = setup_formatter(True, setup_logger())
@@ -194,11 +204,14 @@ class ServerTestRunner(TestRunner):
         self.format.status('ServerRunner PID: %s' % os.getpid())
         if self.settings['server_alternate_protocol'] is None:
             self.format.status('Alternate-Protocol disabled')
+        if self.settings['server_use_tls']:
+            self.tls_config = setup_tls_config(self.settings)
         self.cache = FileCache(self.settings['server_webroot'])
         self.server = thor.SpdyServer(
             host=self.settings['server_host'],
             port=self.settings['server_port'],
             idle_timeout=self.settings['connection_idle_timeout'],
+            tls_config=self.tls_config,
             loop=self.loop)
         self.format.status('LISTENING AT %s:%d' %
             (self.server._host, self.server._port))
@@ -257,10 +270,13 @@ class ClientTestRunner(TestRunner):
         
     def setup(self):
         self.format.status('ClientRunner PID: %s' % os.getpid())
+        if self.settings['client_use_tls']:
+            self.tls_config = setup_tls_config(self.settings)
         self.client = thor.SpdyClient(
             connect_timeout=self.settings['client_connect_timeout'],
-            read_timeout=self.settings['http_response_timeout'],
+            read_timeout=self.settings['client_http_response_timeout'],
             idle_timeout=self.settings['connection_idle_timeout'],
+            tls_config=self.tls_config,
             loop=self.loop)
         for entry in self.settings['client_urls']:
             session = self.client.session((entry['host'], entry['port']))
