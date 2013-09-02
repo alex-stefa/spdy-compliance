@@ -1,0 +1,36 @@
+{
+    "mode": "server",
+    "connection_idle_timeout": 10,
+    "server_host": "10.0.2.15",
+    "server_port": 443,
+    "server_webroot": "www",
+    "server_proxy": true,
+    "server_cache": 32,
+    "server_alternate_protocol": [80, "npn-spdy/3"],
+    "server_use_tls": true,
+    "client_count": 2,
+    "client_connect_timeout": 7,
+    "client_http_response_timeout": null,
+    "client_use_tls": true,
+    "client_urls": [
+        {
+            "host": "10.0.2.15",
+            "port": 443,
+            "urls": [
+                ["GET", "http://localhost:10000/spec.htm", [], null],
+                ["GET", "http://localhost:10000/spdy_compliance.go", [], null]
+            ]
+        }
+    ],
+    "server_push_map": {
+        "spec.htm": ["logo.png"],
+        "spdy_compliance.go": []
+    },
+    "tls_config": {
+        "keyfile": "key.pem",
+        "certfile": "cert.pem",
+        "cafile": null,
+        "capath": null,
+        "npn_prot": ["spdy/3"]
+    }
+}

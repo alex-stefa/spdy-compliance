@@ -66,22 +66,32 @@ class FileCache(object):
     Very simple file cache. Avoids repeated reads of the same file.
     Should not be used for very large files.
     """
-    # TODO: implement LRU cache; limit total memory; etc.
     # TODO: sanitize path (prevent dir traversal)
+    # TODO: directory listing?
+    # TODO: implement LRU cache; limit total memory; etc.
     def __init__(self, rootdir='www'):
         self.rootdir = rootdir
-        self.cache = dict()
     
-    def get_data(self, path):
-        if path[0] == '/':
-            path = path[1:]
+    @functools.lru_cache(maxsize=64)
+    def _get_file(self, file_path):
         try:
-            return self.cache[path]
-        except KeyError:
-            with open(os.path.join(self.rootdir, path), 'rb') as f:
-                data = f.read()
-                self.cache[path] = data
-                return data
+            with open(file_path, 'rb') as f:
+                return f.read()
+        except OSError:
+            return None
+                
+    def handle_request(self, hdr_dict):
+        path = hdr_dict.path
+        if path[0] != '/':
+            return ((400, 'Bad Request'), None)
+        path = path[1:]
+        file_path = os.path.join(self.rootdir, path)
+        if os.path.isdir(file_path):
+            return ((403, 'Forbidden'), None)
+        data = self._get_file(file_path)
+        if data is None:
+            return ((404, 'Not Found'), None)
+        return ((200, 'OK'), data)
 
 #-------------------------------------------------------------------------------
 
@@ -147,7 +157,7 @@ class TestRunner(multiprocessing.Process):
         self.loop = thor.loop.make()
         self.frame_buff = list()
         
-    def setup(self):
+    def setup(self): # to be implemented by inheriting classes
         pass
         
     def run(self):
@@ -180,7 +190,7 @@ class TestRunner(multiprocessing.Process):
         @thor.on(session, 'goaway')
         def on_goaway(reason, last_stream_id):
             self.format.session('SESSION [%s] GOAWAY %s LSID=%d' % 
-                (session.origin, GoawayReasons.str[reason], last_stream_id))
+                (session.origin, frames.GoawayReasons.str[reason], last_stream_id))
         
         @thor.on(session, 'pause')
         def on_pause(paused):
@@ -235,13 +245,21 @@ class ServerTestRunner(TestRunner):
         def on_request_start(hdr_dict):
             self.format.exchange('EXCHG [ID=%d] REQ_START %s' % 
                 (exchange.stream_id, hdr_dict))
-            data = self.cache.get_data(hdr_dict.path)
-            status = "200 OK"
-            self.format.notify('RESPONSE %s %s' % 
-                (status, hdr_dict.uri))
-            exchange.response_start(None, status)
-            exchange.response_body(data)
-            exchange.response_done()
+            if hdr_dict.host[0] in ['localhost', '127.0.0.1']:
+                (res_status, res_body) = self.cache.handle_request(hdr_dict) 
+                self.format.notify('RESPONSE %s %s' % 
+                    (res_status, hdr_dict.uri))
+                if res_body:
+                    exchange.response_start(None, res_status)
+                    exchange.response_body(res_body)
+                    exchange.response_done()
+                else:
+                    exchange.response_start(None, res_status, done=True)
+            else:
+                res_status = (503, 'Service unavailable')
+                self.format.notify('RESPONSE %s %s' % 
+                    (res_status, hdr_dict.uri))
+                exchange.response_start(None, res_status, done=True)
         
         @thor.on(exchange, 'request_headers')
         def on_request_headers(hdr_dict):
