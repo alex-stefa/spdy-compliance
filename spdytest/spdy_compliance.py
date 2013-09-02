@@ -245,7 +245,7 @@ class ServerTestRunner(TestRunner):
         def on_request_start(hdr_dict):
             self.format.exchange('EXCHG [ID=%d] REQ_START %s' % 
                 (exchange.stream_id, hdr_dict))
-            if hdr_dict.host[0] in ['localhost', '127.0.0.1']:
+            if hdr_dict.host[0] in ['localhost', '127.0.0.1', self.settings['server_host']]:
                 (res_status, res_body) = self.cache.handle_request(hdr_dict) 
                 self.format.notify('RESPONSE %s %s' % 
                     (res_status, hdr_dict.uri))
