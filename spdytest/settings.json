@@ -1,7 +1,10 @@
 {
     "mode": "server",
+    "log_file_dir": "logs",
+    "log_file_level": "DEBUG",
+    "log_stderr_level": "DEBUG",
     "connection_idle_timeout": 10,
-    "server_host": "127.0.0.1",
+    "server_host": "10.0.2.15",
     "server_port": 443,
     "server_webroot": "www",
     "server_proxy": true,
@@ -26,11 +29,9 @@
         "spec.htm": ["logo.png"],
         "spdy_compliance.go": []
     },
-    "tls_config": {
-        "keyfile": "key.pem",
-        "certfile": "cert.pem",
-        "cafile": null,
-        "capath": null,
-        "npn_prot": ["spdy/3"]
-    }
+    "tls_keyfile": "key.pem",
+    "tls_certfile": "cert.pem",
+    "tls_cafile": null,
+    "tls_capath": null,
+    "tls_npn_prot": ["spdy/3"]
 }

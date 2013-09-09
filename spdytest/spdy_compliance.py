@@ -7,16 +7,17 @@ import logging
 import multiprocessing
 import time
 import functools
+from urllib.parse import urlsplit, urlunsplit
 
 import thor
-from thor.spdy import error
-from thor.spdy import frames
-from thor.spdy.frames import enum
+import thor.spdy.error as spdy_error
+import thor.spdy.frames as spdy_frames
+import thor.spdy.common as spdy_common 
 
 
 # TerminalColorEscapes contains strings that, when printed to a terminal, will
 # cause subsequent text to be displayed in the given manner.
-Colors = enum(
+Colors = thor.enum(
     BLACK = r'[0;30m',
     RED = r'[0;31m',
     GREEN = r'[0;32m',
@@ -30,19 +31,42 @@ Colors = enum(
     BLINK = r'[5m',
     NORMAL = r'[0m')
 
-def setup_logger():
-    logger = multiprocessing.log_to_stderr()
+class ColorFilter(logging.Filter):
+    def filter(self, record):
+        if not hasattr(record, 'xcolor'):
+            record.xcolor = ''
+        return True    
+    
+def setup_logger(settings):
+    logger = multiprocessing.get_logger()
     logger.setLevel(logging.DEBUG)
+    if settings['log_file_dir'] and settings['log_file_level']:
+        pname = multiprocessing.current_process().name
+        ctime = time.strftime('%Y-%m-%d_%H-%M-%S')
+        filename = os.path.join(settings['log_file_dir'], 
+            'log_%s_%s.txt' % (pname, ctime))
+        filehandler = logging.FileHandler(filename, mode='w', encoding='utf8')
+        filehandler.setLevel(settings['log_file_level'])
+        fileformatter = logging.Formatter(
+            '[%(asctime)s] %(processName)-10s %(levelname)-8s %(message)s')
+        filehandler.setFormatter(fileformatter)
+        logger.addHandler(filehandler)
+    if settings['log_stderr_level']:
+        streamhandler = logging.StreamHandler(stream=sys.stderr)
+        streamhandler.setLevel(settings['log_stderr_level'])
+        streamhandler.addFilter(ColorFilter())
+        streamformatter = logging.Formatter(
+            '[%(levelname)s/%(processName)s] %(xcolor)s%(message)s' +
+            Colors.NORMAL)
+        streamhandler.setFormatter(streamformatter)
+        logger.addHandler(streamhandler)
     return logger
-
-def setup_formatter(use_colors, logger):
+    
+def setup_formatter(logger):
     def _wrapper(level, color, str):
-        if use_colors:
-            logger.log(level, color + str + Colors.NORMAL)
-        else:
-            logger.log(level, str)
+        logger.log(level, str, extra={'xcolor': color})
 
-    return enum(
+    return thor.enum(
         error = functools.partial(_wrapper, logging.ERROR, Colors.RED),
         frame = functools.partial(_wrapper, logging.DEBUG, Colors.DIM),
         exchange = functools.partial(_wrapper, logging.INFO, Colors.YELLOW),
@@ -51,17 +75,16 @@ def setup_formatter(use_colors, logger):
         notify = functools.partial(_wrapper, logging.INFO, Colors.BLUE))
         
 def setup_tls_config(settings):
-    tls_config = settings['tls_config']
     return thor.TlsConfig(
-        keyfile=tls_config['keyfile'],
-        certfile=tls_config['certfile'],
-        cafile=tls_config['cafile'],
-        capath=tls_config['capath'],
-        npn_prot=tls_config['npn_prot'])
+        keyfile=settings['tls_keyfile'],
+        certfile=settings['tls_certfile'],
+        cafile=settings['tls_cafile'],
+        capath=settings['tls_capath'],
+        npn_prot=settings['tls_npn_prot'])
     
 #-------------------------------------------------------------------------------
 
-class FileCache(object):
+class FileServer(object):
     """
     Very simple file cache. Avoids repeated reads of the same file.
     Should not be used for very large files.
@@ -79,18 +102,26 @@ class FileCache(object):
                 return f.read()
         except OSError:
             return None
+    
+    @staticmethod
+    def _get_err_page(status):
+        return ('<html><body><h1>%s %s</h1></body></html>' % 
+            (str(status[0]), str(status[1]))).encode()
                 
     def handle_request(self, hdr_dict):
         path = hdr_dict.path
         if path[0] != '/':
-            return ((400, 'Bad Request'), None)
+            status = (400, 'Bad Request') 
+            return (status, self._get_err_page(status))
         path = path[1:]
         file_path = os.path.join(self.rootdir, path)
         if os.path.isdir(file_path):
-            return ((403, 'Forbidden'), None)
+            status = (403, 'Forbidden')
+            return (status, self._get_err_page(status))
         data = self._get_file(file_path)
         if data is None:
-            return ((404, 'Not Found'), None)
+            status = (404, 'Not Found')
+            return (status, self._get_err_page(status))
         return ((200, 'OK'), data)
 
 #-------------------------------------------------------------------------------
@@ -109,7 +140,7 @@ class SpdyAdvertiser(multiprocessing.Process):
         self.settings = settings
         
     def setup(self):
-        self.format = setup_formatter(True, setup_logger())
+        self.format = setup_formatter(setup_logger(self.settings))
         self.format.status('SpdyAdvertiser PID: %s' % os.getpid())
         self.loop = thor.loop.make()
         self.adv_server = thor.HttpServer(
@@ -126,13 +157,13 @@ class SpdyAdvertiser(multiprocessing.Process):
         
         def adv_handler(exchange):
             @thor.on(exchange, 'request_start')
-            def advertise(method, uri, req_hdrs):
-                self.format.notify('Alternate-Protocol announce: %s %s' % 
-                    (method, uri))
-                exchange.response_start(501, 'Not Implemented', [
+            def advertise(method, path, req_hdrs):
+                host = thor.http.get_header(req_hdrs, 'host')[-1]
+                self.format.notify('Alternate-Protocol announce: %s %s %s' % 
+                    (method, host, path))
+                exchange.response_start(503, 'Service Unavailable', [
                     ('Alternate-Protocol', adv_value), 
-                    ('Content-Length', '0'),
-                    ('Connection', 'close')])
+                    ('Content-Length', '0')])
                 exchange.response_done([])
             
         self.adv_server.on('exchange', adv_handler)
@@ -153,7 +184,7 @@ class TestRunner(multiprocessing.Process):
         self.tls_config = None
         
     def _setup(self):
-        self.format = setup_formatter(True, setup_logger())
+        self.format = setup_formatter(setup_logger(self.settings))
         self.loop = thor.loop.make()
         self.frame_buff = list()
         
@@ -174,9 +205,14 @@ class TestRunner(multiprocessing.Process):
         @thor.on(session, 'frame')
         def on_frame(frame):  
             session.frame_buff.append(frame)
-            self.format.frame('SESSION [%s] FRAME %s' % 
+            self.format.frame('SESSION [%s] FRAME-IN %s' % 
                 (session.origin, frame)) 
             
+        @thor.on(session, 'output')
+        def on_output(frame):  
+            self.format.frame('SESSION [%s] FRAME-OUT %s' % 
+                (session.origin, frame)) 
+
         @thor.on(session, 'error')
         def on_error(error):
             self.format.error('SESSION [%s] ERROR %s' % 
@@ -189,8 +225,10 @@ class TestRunner(multiprocessing.Process):
             
         @thor.on(session, 'goaway')
         def on_goaway(reason, last_stream_id):
-            self.format.session('SESSION [%s] GOAWAY %s LSID=%d' % 
-                (session.origin, frames.GoawayReasons.str[reason], last_stream_id))
+            self.format.session('SESSION [%s] GOAWAY %s LSID=%d' % (
+                session.origin, 
+                spdy_frames.GoawayReasons.str[reason], 
+                last_stream_id))
         
         @thor.on(session, 'pause')
         def on_pause(paused):
@@ -216,7 +254,9 @@ class ServerTestRunner(TestRunner):
             self.format.status('Alternate-Protocol disabled')
         if self.settings['server_use_tls']:
             self.tls_config = setup_tls_config(self.settings)
-        self.cache = FileCache(self.settings['server_webroot'])
+        if self.settings['server_proxy']:
+            self.fetcher = thor.HttpClient(loop=self.loop)
+        self.local_server = FileServer(self.settings['server_webroot'])
         self.server = thor.SpdyServer(
             host=self.settings['server_host'],
             port=self.settings['server_port'],
@@ -225,8 +265,12 @@ class ServerTestRunner(TestRunner):
             loop=self.loop)
         self.format.status('LISTENING AT %s:%d' %
             (self.server._host, self.server._port))
+        self.server.on('error', self.on_conn_error)
         self.server.on('session', self.on_session)
-
+        
+    def on_conn_error(self, error):
+        self.format.error('ACCEPT ERROR %s' % error)
+    
     def on_session(self, session):
         self.format.session('SESSION NEW %s' % session)
         self.setup_session(session)
@@ -245,10 +289,32 @@ class ServerTestRunner(TestRunner):
         def on_request_start(hdr_dict):
             self.format.exchange('EXCHG [ID=%d] REQ_START %s' % 
                 (exchange.stream_id, hdr_dict))
-            if hdr_dict.host[0] in ['localhost', '127.0.0.1', self.settings['server_host']]:
-                (res_status, res_body) = self.cache.handle_request(hdr_dict) 
+            exchange.req_hdrs = hdr_dict
+            exchange.req_body = b''
+            exchange.is_local = hdr_dict.host[0] in [
+                'localhost', '127.0.0.1', self.settings['server_host']]
+        
+        @thor.on(exchange, 'request_headers')
+        def on_request_headers(hdr_dict):
+            self.format.exchange('EXCHG [ID=%d] REQ_HDRS %s' % 
+                (exchange.stream_id, hdr_dict))
+            exchange.req_hdrs.update(hdr_dict)
+        
+        @thor.on(exchange, 'request_body')
+        def on_request_body(chunk):
+            self.format.exchange('EXCHG [ID=%d] REQ_BODY LEN=%d' % 
+                (exchange.stream_id, len(chunk)))
+            exchange.req_body += chunk
+        
+        @thor.on(exchange, 'request_done')
+        def on_request_done():
+            self.format.exchange('EXCHG [ID=%d] REQ_DONE' % 
+                exchange.stream_id)
+            if exchange.is_local:
+                (res_status, res_body) = self.local_server.handle_request(
+                    exchange.req_hdrs) 
                 self.format.notify('RESPONSE %s %s' % 
-                    (res_status, hdr_dict.uri))
+                    (res_status, exchange.req_hdrs.uri))
                 if res_body:
                     exchange.response_start(None, res_status)
                     exchange.response_body(res_body)
@@ -256,25 +322,57 @@ class ServerTestRunner(TestRunner):
                 else:
                     exchange.response_start(None, res_status, done=True)
             else:
-                res_status = (503, 'Service unavailable')
-                self.format.notify('RESPONSE %s %s' % 
-                    (res_status, hdr_dict.uri))
-                exchange.response_start(None, res_status, done=True)
-        
-        @thor.on(exchange, 'request_headers')
-        def on_request_headers(hdr_dict):
-            self.format.exchange('EXCHG [ID=%d] REQ_HDRS %s' % 
-                (exchange.stream_id, hdr_dict))
-        
-        @thor.on(exchange, 'request_body')
-        def on_request_body(chunk):
-            self.format.exchange('EXCHG [ID=%d] REQ_BODY LEN=%d' % 
-                (exchange.stream_id, len(chunk)))
-        
-        @thor.on(exchange, 'request_done')
-        def on_request_done():
-            self.format.exchange('EXCHG [ID=%d] REQ_DONE' % 
-                exchange.stream_id)
+                if not self.settings['server_proxy']:
+                    res_status = (503, 'Service unavailable')
+                    self.format.notify('RESPONSE %s %s' % 
+                        (res_status, exchange.req_hdrs.uri))
+                    exchange.response_start(None, res_status, done=True)
+                else:
+                    http_exchg = self.fetcher.exchange()
+                    
+                    @thor.on(http_exchg, 'response_start')
+                    def on_response_start(res_code, res_phrase, res_tuples):
+                        exchange.res_status = (res_code, res_phrase)
+                        exchange.res_body = ''
+                        exchange.res_hdrs = res_tuples
+                        
+                    @thor.on(http_exchg, 'response_body')
+                    def on_response_body(chunk):
+                        exchange.res_body += chunk
+                        
+                    @thor.on(http_exchg, 'response_done')
+                    def on_response_done(trailers):
+                        self.format.notify('RESPONSE %s %s ' % 
+                            (exchange.res_status, exchange.req_hdrs.uri))
+                        exchange.response_start(
+                            exchange.res_hdrs,
+                            exchange.res_status)
+                        if len(exchange.res_body) > 0:
+                            exchange.response_body(exchange.res_body.encode())
+                        exchange.response_done()
+                        
+                    @thor.on(http_exchg, 'error')
+                    def on_http_error(error):
+                        self.format.notify('Failed to fetch %s %s: %s' % (
+                            exchange.req_hdrs.method, 
+                            exchange.req_hdrs.uri, 
+                            repr(error)))
+                        res_status = (500, 'Internal Server Error')
+                        self.format.notify('RESPONSE %s %s ' % 
+                            (res_status, exchange.req_hdrs.uri))
+                        exchange.response_start(None, res_status, done=True)
+                        
+                    http_hdrs = (
+                        [('Content-Length', str(len(exchange.req_body)))] +  
+                        [(n.title(), v) for (n, v) in exchange.req_hdrs.items() 
+                            if n not in spdy_common.request_hdrs])
+                    http_exchg.request_start(
+                        exchange.req_hdrs.method,
+                        exchange.req_hdrs.uri,
+                        http_hdrs)
+                    if len(exchange.req_body) > 0:
+                        http_exchg.request_body(exchange.req_body)
+                    http_exchg.request_done([])
         
         @thor.on(exchange, 'pause')
         def on_pause(paused):
@@ -356,6 +454,8 @@ if __name__ == "__main__":
         settings_file = 'settings.json'
     with open(settings_file, 'r') as f:
         settings = json.load(f)
+    if settings['log_file_level'] and settings['log_file_dir']:
+        os.makedirs(settings['log_file_dir'], exist_ok=True)
     procs = list()
     if settings['mode'] in ['server', 'mixed']:
         p = ServerTestRunner(settings)
