@@ -30,14 +30,14 @@ Colors = thor.enum(
     DIM = r'[2m',
     BLINK = r'[5m',
     NORMAL = r'[0m')
-
-class ColorFilter(logging.Filter):
-    def filter(self, record):
-        if not hasattr(record, 'xcolor'):
-            record.xcolor = ''
-        return True    
     
 def setup_logger(settings):
+    class ColorFilter(logging.Filter):
+        def filter(self, record):
+            if not hasattr(record, 'xcolor'):
+                record.xcolor = ''
+            return True    
+
     logger = multiprocessing.get_logger()
     logger.setLevel(logging.DEBUG)
     if settings['log_file_dir'] and settings['log_file_level']:
