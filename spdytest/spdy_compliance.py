@@ -179,15 +179,15 @@ class SpdyAdvertiser(multiprocessing.Process):
         self.loop = thor.loop.make()
         self.adv_server = thor.HttpServer(
             host=self.settings['server_host'],
-            port=self.settings['server_alternate_protocol'][0],
+            port=self.settings['spdy_advertiser_port'],
             loop=self.loop)
         adv_value = '%d:%s' % (
             self.settings['server_port'], 
-            self.settings['server_alternate_protocol'][1])
+            self.settings['spdy_advertiser_value'])
         self.format.status('Alternate-Protocol: %s advertised on %s:%d' % (
             adv_value,
             self.settings['server_host'],
-            self.settings['server_alternate_protocol'][0]))
+            self.settings['spdy_advertiser_port']))
         
         def adv_handler(exchange):
             @thor.on(exchange, 'request_start')
@@ -223,7 +223,7 @@ class SimpleDNS(multiprocessing.Process):
     def __init__(self, settings, name='DNS'):
         multiprocessing.Process.__init__(self, name=name)
         self.settings = settings
-        self.dns_host = settings['dns_host']
+        self.dns_host = settings['server_host']
         self.dns_port = settings['dns_port']
         self.reply_ip = settings['dns_A_reply']
         
@@ -345,7 +345,7 @@ class TestRunner(multiprocessing.Process):
 class ServerTestRunner(TestRunner):
     def __init__(self, settings, name='SERVER'):
         TestRunner.__init__(self, settings, name)
-        if self.settings['server_alternate_protocol'] is not None:
+        if self.settings['server_use_spdy_advertiser']:
             self.padv = SpdyAdvertiser(self.settings)
             self.padv.start()   
         if self.settings['server_use_dns']:
@@ -354,8 +354,6 @@ class ServerTestRunner(TestRunner):
         
     def setup(self):
         self.format.status('ServerRunner PID: %s' % os.getpid())
-        if self.settings['server_alternate_protocol'] is None:
-            self.format.status('Alternate-Protocol disabled')
         if self.settings['server_use_tls']:
             self.tls_config = setup_tls_config(self.settings)
         if self.settings['server_use_proxy']:

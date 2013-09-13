@@ -9,7 +9,7 @@
     "server_webroot": "www",
     "server_use_proxy": true,
     "server_use_dns": false,
-    "server_alternate_protocol": [80, "npn-spdy/3"],
+    "server_use_spdy_advertiser": true,
     "server_use_tls": true,
     "server_push_map": {
         "spec.htm": ["logo.png"],
@@ -42,7 +42,8 @@
             ]
         }
     ],
-    "dns_host": "10.0.2.15",
+    "spdy_advertiser_port": 80,
+    "spdy_advertiser_value": "npn-spdy/3",
     "dns_port": 53,
     "dns_A_reply": "10.0.2.15", 
     "tls_keyfile": "key.pem",
