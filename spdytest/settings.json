@@ -3,7 +3,7 @@
     "log_file_dir": "logs",
     "log_file_level": "DEBUG",
     "log_stderr_level": "DEBUG",
-    "server_host": "127.0.0.1",
+    "server_host": "10.0.2.15",
     "server_port": 443,
     "server_idle_timeout": 5,
     "server_webroot": "www",
@@ -22,7 +22,7 @@
     "client_use_tls": true,
     "client_urls": [
         {
-            "host": "127.0.0.1",
+            "host": "10.0.2.15",
             "port": 443,
             "urls": [
                 ["GET", "http://localhost/spec.htm", [], null],
@@ -30,9 +30,9 @@
             ]
         }
     ],
-    "dns_host": "127.0.0.1",
+    "dns_host": "10.0.2.15",
     "dns_port": 53,
-    "dns_A_reply": "127.0.0.1", 
+    "dns_A_reply": "10.0.2.15", 
     "tls_keyfile": "key.pem",
     "tls_certfile": "cert.pem",
     "tls_cafile": null,
