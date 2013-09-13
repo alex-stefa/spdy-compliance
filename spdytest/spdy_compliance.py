@@ -36,6 +36,7 @@ import multiprocessing
 import time
 import functools
 import socket
+import hashlib
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import url2pathname
 
@@ -101,8 +102,8 @@ def setup_formatter(logger):
         frame = functools.partial(_wrapper, logging.DEBUG, Colors.DIM),
         exchange = functools.partial(_wrapper, logging.INFO, Colors.YELLOW),
         session = functools.partial(_wrapper, logging.INFO, Colors.GREEN),
-        status = functools.partial(_wrapper, logging.INFO, Colors.BOLD),
-        notify = functools.partial(_wrapper, logging.INFO, Colors.BLUE))
+        status = functools.partial(_wrapper, logging.WARNING, Colors.BOLD),
+        notify = functools.partial(_wrapper, logging.WARNING, Colors.BLUE))
         
 def setup_tls_config(settings):
     return thor.TlsConfig(
@@ -357,7 +358,7 @@ class ServerTestRunner(TestRunner):
             self.format.status('Alternate-Protocol disabled')
         if self.settings['server_use_tls']:
             self.tls_config = setup_tls_config(self.settings)
-        if self.settings['server_proxy']:
+        if self.settings['server_use_proxy']:
             self.fetcher = thor.HttpClient(loop=self.loop)
         self.local_server = FileServer(self.settings['server_webroot'])
         self.server = thor.SpdyServer(
@@ -425,7 +426,7 @@ class ServerTestRunner(TestRunner):
                 else:
                     exchange.response_start(None, res_status, done=True)
             else:
-                if not self.settings['server_proxy']:
+                if not self.settings['server_use_proxy']:
                     res_status = (503, 'Service unavailable')
                     self.format.notify('RESPONSE %s %s' % 
                         (res_status, exchange.req_hdrs.uri))
@@ -502,14 +503,26 @@ class ClientTestRunner(TestRunner):
             self.format.session('SESSION NEW %s' % session)
             self.setup_session(session)
             for url in  entry['urls']:
-                self.do_request(session, url[0], url[1], url[2], url[3])
+                self.do_request(session, url[0], url[1], url[2], url[3], url[4])
         
-    def do_request(self, session, method, uri, headers, body):
+    def do_request(self, session, method, uri, headers, body, checksum):
         exchange = session.exchange()
-        self.format.exchange('EXCHG NEW %s' % exchange)
         self.format.notify('REQUEST %s %s' % (method, uri))
         self.setup_exchange(exchange)
-        exchange.request_start(method, uri, None, True)
+        exchange.checksum = checksum
+        exchange.hasher = hashlib.md5()
+        exchange.uri = uri
+        req_hdrs = None
+        if headers is not None:
+            req_hdrs = [(p[0], p[1]) for p in headers]
+        if body is not None:
+            body = body.encode()
+            exchange.request_start(method, uri, req_hdrs)
+            exchange.request_body(body)
+            exchange.request_done()
+        else:
+            exchange.request_start(method, uri, req_hdrs, done=True)
+        self.format.exchange('EXCHG NEW %s' % exchange)
         
     def setup_exchange(self, exchange):
         @thor.on(exchange, 'error')
@@ -531,11 +544,26 @@ class ClientTestRunner(TestRunner):
         def on_response_body(chunk):
             self.format.exchange('EXCHG [ID=%d] RES_BODY LEN=%d' % 
                 (exchange.stream_id, len(chunk)))
+            exchange.hasher.update(chunk)
         
         @thor.on(exchange, 'response_done')
         def on_response_done():
-            self.format.exchange('EXCHG [ID=%d] RES_DONE' % 
-                exchange.stream_id)
+            digest = exchange.hasher.hexdigest()
+            if exchange.checksum:
+                if exchange.checksum == digest:
+                    self.format.exchange('EXCHG [ID=%d] RES_DONE'
+                        ' [MD5 MATCH: %s]' % 
+                        (exchange.stream_id, exchange.checksum))
+                else:
+                    self.format.exchange('EXCHG [ID=%d] RES_DONE'
+                        ' [MD5 MISMATCH: GOT=%s, EXPECTED=%s]' % 
+                        (exchange.stream_id, digest, exchange.checksum))
+                    self.format.error('MD5 digest mismatch for %s:'
+                        '\n\t%s computed\n\t%s expected' % 
+                        (exchange.uri, digest, exchange.checksum))
+            else:
+                self.format.exchange('EXCHG [ID=%d] RES_DONE'
+                    ' [MD5: %s]' % (exchange.stream_id, digest))
         
         @thor.on(exchange, 'pause')
         def on_pause(paused):
@@ -554,7 +582,12 @@ if __name__ == "__main__":
     try:
         settings_file = sys.argv[1]
     except IndexError:
-        settings_file = 'settings.json'
+        print("""\
+SPDY/3 Testing Tool (c) 2013 Alex Stefanescu <alex.stefa@gmail.com>
+
+Usage:
+    %s <settings-file>""" % sys.argv[0])
+        sys.exit()
     with open(settings_file, 'r') as f:
         settings = json.load(f)
     if settings['log_file_level'] and settings['log_file_dir']:
