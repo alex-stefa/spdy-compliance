@@ -7,7 +7,9 @@ import logging
 import multiprocessing
 import time
 import functools
+import socket
 from urllib.parse import urlsplit, urlunsplit
+from urllib.request import url2pathname
 
 import thor
 import thor.spdy.error as spdy_error
@@ -48,7 +50,7 @@ def setup_logger(settings):
         filehandler = logging.FileHandler(filename, mode='w', encoding='utf8')
         filehandler.setLevel(settings['log_file_level'])
         fileformatter = logging.Formatter(
-            '[%(asctime)s] %(processName)-10s %(levelname)-8s %(message)s')
+            '[%(asctime)s] %(levelname)-8s %(message)s')
         filehandler.setFormatter(fileformatter)
         logger.addHandler(filehandler)
     if settings['log_stderr_level']:
@@ -109,7 +111,10 @@ class FileServer(object):
             (str(status[0]), str(status[1]))).encode()
                 
     def handle_request(self, hdr_dict):
-        path = hdr_dict.path
+        if hdr_dict.method.lower() != 'get':
+            status = (501, 'Not Implemented')
+            return (status, self._get_err_page(status))
+        path = url2pathname(hdr_dict.path_split[0])
         if path[0] != '/':
             status = (400, 'Bad Request') 
             return (status, self._get_err_page(status))
@@ -174,6 +179,73 @@ class SpdyAdvertiser(multiprocessing.Process):
             self.loop.run()
         except KeyboardInterrupt:
             self.adv_server.shutdown()
+
+#-------------------------------------------------------------------------------
+    
+class SimpleDNS(multiprocessing.Process):
+    """
+    Basic domain name server to be used to point clients to the SPDY server 
+    working as a web proxy. Replies for A record only.
+    
+    see: https://gist.github.com/zeuxisoo/1205467
+    see: http://code.activestate.com/recipes/491264/
+    see: https://github.com/Crypt0s/FakeDns/blob/master/fakedns.py
+    """
+    def __init__(self, settings, name='DNS'):
+        multiprocessing.Process.__init__(self, name=name)
+        self.settings = settings
+        self.dns_host = settings['dns_host']
+        self.dns_port = settings['dns_port']
+        self.reply_ip = settings['dns_A_reply']
+        
+    def process_request(data):
+        domain = b''
+        type = (data[2] >> 3) & 15 # Opcode bits
+        if type == 0: # Standard query
+            start = 12
+            size = data[ini]
+        else:
+            self.format.notify('Unsupported request type: %d' % type)
+            return (None, None)
+        while size != 0:
+            domain += data[(start + 1):(start + size + 1)] + b'.'
+            start += size + 1
+            size = data[start]
+        if domain:
+            reply = data[:2] + b'\x81\x80'
+            # Questions and Answers Counts:
+            reply += data[4:6] + data[4:6] + b'\x00\x00\x00\x00' 
+            # Original Domain Name Question:
+            reply += data[12:]
+            # Pointer to domain name:
+            reply += b'\xc0\x0c'
+            # Response type, ttl and resource data length of 4 bytes:
+            reply += b'\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04'
+            # 4 bytes of IP:            
+            reply += bytes(map(int, self.reply_ip.split('.'))) 
+            return (domain.decode(), reply)
+        else:
+            self.format.notify('Failed to read request domain.')
+            return (None, None)
+        
+    def run(self):
+        self.format = setup_formatter(setup_logger(self.settings))
+        self.format.status('SimpleDNS PID: %s' % os.getpid())
+        self.format.status('DNS service running at %s:%d' % (
+            self.dns_host, self.dns_port))
+        udps = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udps.bind((self.dns_host, self.dns_port))
+        
+        try:
+            while True:
+                (data, address) = udps.recvfrom(1024)
+                (domain, reply) = process_request(data)
+                if reply:
+                    self.format.notify('Replied to %s with %s for query %s.' % (
+                        address, self.reply_ip, domain))
+                    udps.sendto(reply, address)
+        except KeyboardInterrupt:
+            udps.close()
 
 #-------------------------------------------------------------------------------
     
@@ -247,6 +319,9 @@ class ServerTestRunner(TestRunner):
         if self.settings['server_alternate_protocol'] is not None:
             self.padv = SpdyAdvertiser(self.settings)
             self.padv.start()   
+        if self.settings['server_use_dns']:
+            self.pdns = SimpleDNS(self.settings)
+            self.pdns.start()
         
     def setup(self):
         self.format.status('ServerRunner PID: %s' % os.getpid())
@@ -260,7 +335,7 @@ class ServerTestRunner(TestRunner):
         self.server = thor.SpdyServer(
             host=self.settings['server_host'],
             port=self.settings['server_port'],
-            idle_timeout=self.settings['connection_idle_timeout'],
+            idle_timeout=self.settings['server_idle_timeout'],
             tls_config=self.tls_config,
             loop=self.loop)
         self.format.status('LISTENING AT %s:%d' %
@@ -391,7 +466,7 @@ class ClientTestRunner(TestRunner):
         self.client = thor.SpdyClient(
             connect_timeout=self.settings['client_connect_timeout'],
             read_timeout=self.settings['client_http_response_timeout'],
-            idle_timeout=self.settings['connection_idle_timeout'],
+            idle_timeout=self.settings['client_idle_timeout'],
             tls_config=self.tls_config,
             loop=self.loop)
         for entry in self.settings['client_urls']:

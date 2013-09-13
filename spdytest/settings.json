@@ -1,18 +1,23 @@
 {
-    "mode": "server",
+    "mode": "mixed",
     "log_file_dir": "logs",
     "log_file_level": "DEBUG",
     "log_stderr_level": "DEBUG",
-    "connection_idle_timeout": 10,
-    "server_host": "10.0.2.15",
+    "server_host": "127.0.0.1",
     "server_port": 443,
+    "server_idle_timeout": 5,
     "server_webroot": "www",
     "server_proxy": true,
-    "server_cache": 32,
+    "server_use_dns": false,
     "server_alternate_protocol": [80, "npn-spdy/3"],
     "server_use_tls": true,
+    "server_push_map": {
+        "spec.htm": ["logo.png"],
+        "spdy_compliance.go": []
+    },
     "client_count": 2,
     "client_connect_timeout": 7,
+    "client_idle_timeout": 10,
     "client_http_response_timeout": null,
     "client_use_tls": true,
     "client_urls": [
@@ -25,10 +30,9 @@
             ]
         }
     ],
-    "server_push_map": {
-        "spec.htm": ["logo.png"],
-        "spdy_compliance.go": []
-    },
+    "dns_host": "127.0.0.1",
+    "dns_port": 53,
+    "dns_A_reply": "127.0.0.1", 
     "tls_keyfile": "key.pem",
     "tls_certfile": "cert.pem",
     "tls_cafile": null,
