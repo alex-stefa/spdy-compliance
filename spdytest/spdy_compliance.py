@@ -491,7 +491,9 @@ class ServerRunner(SpdyRunner):
                     req_path = url2pathname(exchange.req_hdrs.path_split[0])[1:]
                     push_paths = self.settings['server_push_map'].get(
                         req_path, []) 
-                    for (push_path, push_priority) in push_paths:
+                    for push_entry in push_paths:
+                        push_path = push_entry["file"]
+                        push_priority = push_entry["priority"]
                         file_path = os.path.join(self.local_server.rootdir, 
                             push_path)
                         push_body = self.local_server.get_file(file_path)
@@ -604,7 +606,8 @@ class ClientRunner(SpdyRunner):
             self.format.session('SESSION NEW %s' % session)
             self.setup_session(session)
             for url in  entry['urls']:
-                self.do_request(session, url[0], url[1], url[2], url[3], url[4])
+                self.do_request(session, url["method"], url["url"], 
+                    url["headers"], url["body"], url["md5"])
         
     def do_request(self, session, method, uri, headers, body, checksum):
         exchange = session.exchange()
