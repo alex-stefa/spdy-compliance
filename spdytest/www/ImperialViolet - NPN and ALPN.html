@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <title>ImperialViolet - NPN and ALPN</title>
+    <meta name="author" content="Adam Langley">
+
+    <link rel="alternate" type="application/atom+xml" title="Atom Feed" href="https://www.imperialviolet.org/2013/03/20/iv-rss.xml">
+    <link rel="openid2.provider" href="https://www.google.com/accounts/o8/ud?source=profiles">
+    <link rel="openid2.local_id" href="https://plus.google.com/118082204714636759510">
+    <link rel="me" type="text/html" href="http://www.google.com/profiles/alangley">
+    <link href="ImperialViolet%20-%20NPN%20and%20ALPN_files/css.css" rel="stylesheet" type="text/css">
+    <link href="ImperialViolet%20-%20NPN%20and%20ALPN_files/css_002.css" rel="stylesheet" type="text/css">
+    <meta http-equiv="X-XRDS-Location" content="http://www.myopenid.com/xrds?username=alangley.myopenid.com">
+
+    <style>
+      @font-face {
+        font-family: Elena;
+        src: url('/fonts/ElenaWebBasicRegular.woff');
+      }
+      @font-face {
+        font-family: Elena;
+        src: url('/fonts/ElenaWebBasicRegularItalic.woff');
+        font-style: italic;
+      }
+      @font-face {
+        font-family: Elena;
+        src: url('/fonts/ElenaWebBasicBold.woff');
+        font-weight: bold;
+      }
+      @font-face {
+        font-family: Elena;
+        src: url('/fonts/ElenaWebBasicBoldItalic.woff');
+        font-weight: bold;
+        font-style: italic;
+      }
+
+      body {
+        font-family: Elena; serif;
+        text-align: justify;
+        max-width: 50em;
+        line-height: 1.8;
+        margin-left: auto;
+        margin-right: auto;
+        background-color: #fbfbfc;
+      }
+
+      h1, h2 {
+        font-family: 'Yanone Kaffeesatz', arial, serif;
+        font-weight: normal;
+      }
+
+      h1 a {
+        text-decoration: none;
+        color: black;
+      }
+
+      h3 a {
+        color: #222;
+        text-decoration: none;
+      }
+
+      h1 {
+        font-size: 4.5em;
+        margin-bottom: 0;
+        padding-bottom: 0;
+        margin-top: 0;
+        padding-top: 0;
+      }
+
+      h2 {
+        margin-top: 0;
+        padding-top: 0;
+        margin-bottom: 2em;
+      }
+
+      h3 {
+        margin-left: -2em;
+        font-weight: normal;
+      }
+
+
+      td.topblock {
+        max-width: 25em;
+      }
+
+      td.topblockpadleft {
+        padding-left: 2em;
+      }
+
+      div.postcontents {
+      }
+
+      div.postcontents h3:before {
+        content: "» ";
+	font-weight: normal;
+      }
+
+      div.postcontents h3 {
+        color: #666;
+	font-size: 1.3em;
+        padding-top: 3em;
+	font-weight: normal;
+      }
+
+      div.postcontents h3 a {
+        color: #444;
+        text-decoration: none;
+	font-family: 'Marcellus SC', serif;
+      }
+
+      div.postcontents a {
+        color: #222;
+      }
+
+      /* For the SELinux page */
+
+      div#selinux {
+        max-width: 65em;
+        text-align: justify;
+      }
+      div#selinux .subject {
+        color: red;
+      }
+      div#selinux .action {
+        color: green;
+      }
+      div#selinux .object {
+        color: blue;
+      }
+      div#selinux .class {
+        font-family: monospace;
+        color: brown;
+      }
+      .div#selinux permission {
+        font-family: monospace;
+        color: cadetblue;
+      }
+      div#selinux .type {
+        color: yellowgreen;
+      }
+      div#selinux .fileaction {
+        font-variant: small-caps;
+      }
+    </style>
+  </head>
+
+  <body>
+      <div class="topbox">
+    <h1><a href="https://www.imperialviolet.org/">ImperialViolet</a></h1>
+  </div>
+
+  <div class="postcontents">
+    <h3><a href="https://www.imperialviolet.org/2013/03/20/alpn.html">NPN and ALPN</a> (20 Mar 2013)</h3>
+
+    <div class="post">
+      <p>Since its inception, SPDY has depended on a TLS extension called <a href="https://technotes.googlecode.com/git/nextprotoneg.html">NPN</a>. NPN allows a TLS connection to negotiate which application-level protocol will be running across it.</p>
+
+<p>NPN allows SPDY to be enabled efficiently. If we had run SPDY on a 
+different port, then we would have had to be constantly creating probing
+ connections to see whether a site supported SPDY as well as HTTPS. Even
+ if we knew that a site supported SPDY, network devices between any 
+given client and that site might block connections to the different TCP 
+port. If we had tried an HTTP Upgrade header, that would have slowed 
+everything down and caused compatibility issues with servers and proxies
+ that didn't process the header correctly.</p>
+
+<p>NPN also allows us to update SPDY without spending round trips on a 
+version negotiation. Overall, NPN has worked very well for SPDY.</p>
+
+<p>NPN attempted to be a little bit future proof by sending the selected
+ application protocol name under encryption, so that network devices 
+couldn't discriminate. The benefit was somewhat limited because the 
+server's list of supported protocols was still sent in the clear but we 
+believe that anything that can be encrypted, should be encrypted.</p>
+
+<p>There is an alternative to NPN: <a href="http://tools.ietf.org/html/draft-friedl-tls-applayerprotoneg-02">ALPN</a> is essentially the same design except that the negotiation is done in the clear (like other TLS extensions).</p>
+
+<p>Last Friday, at IETF 86 in Orlando, the TLS working group considered 
+both designs and came to a rough consensus on ALPN. ALPN is currently on
+ track to be published as an RFC at some point and we will be switching 
+SPDY over to it and deprecating NPN.</p>
+
+<p>Once IANA has assigned a TLS extension number for ALPN, Google servers will start supporting <i>both</i>
+ NPN and ALPN, with a preference for ALPN. Chrome and, I expect, other 
+browsers will start sending both NPN and ALPN extensions. During this 
+time, SPDY servers will be able to switch from NPN to ALPN without 
+dropping SPDY support for current clients.</p>
+
+<p>At some point after the end of 2014, I plan on removing NPN support 
+from Chrome and Google servers. Any old servers and clients will 
+continue to function just fine: they'll just use HTTPS.</p>
+
+    </div>
+  </div>
+
+  
+
+</body></html>

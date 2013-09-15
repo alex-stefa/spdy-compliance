@@ -1,27 +1,47 @@
 {
-    "mode": "mixed",
+    "server_enabled": true,
+    "server_test_mode": false,
+    "client_enabled": true,
+    "client_test_mode": false,
     "log_file_dir": "logs",
     "log_file_level": "DEBUG",
-    "log_stderr_level": "DEBUG",
+    "log_stderr_level": "WARNING",
+    "spdy_advertiser_port": 80,
+    "spdy_advertiser_value": "npn-spdy/3",
+    "dns_port": 53,
+    "dns_A_reply": "10.0.2.15", 
+    "tls_keyfile": "key.pem",
+    "tls_certfile": "cert.pem",
+    "tls_cafile": null,
+    "tls_capath": null,
+    "tls_npn_prot": ["spdy/3"],
     "server_host": "10.0.2.15",
     "server_port": 443,
-    "server_idle_timeout": 5,
+    "server_idle_timeout": null,
     "server_webroot": "www",
     "server_use_proxy": true,
     "server_use_dns": false,
     "server_use_spdy_advertiser": true,
     "server_use_tls": true,
     "server_push_map": {
-        "spec.htm": ["logo.png"],
-        "spdy_compliance.go": []
+        "pics.html": [
+            ["pics/(1).jpg", 0],
+            ["pics/(3).jpg", 0],
+            ["pics/(5).jpg", 7]
+        ],    
+        "ImperialViolet - NPN and ALPN.html": [
+            ["ImperialViolet - NPN and ALPN_files/css.css", 0],
+            ["ImperialViolet - NPN and ALPN_files/css_002.css", 0]
+        ]
     },
-    "client_count": 2,
+    "client_instances": 1,
     "client_connect_timeout": 7,
     "client_idle_timeout": 10,
     "client_http_response_timeout": null,
     "client_use_tls": true,
     "client_urls": [
         {
+            "enabled": true,
             "host": "10.0.2.15",
             "port": 443,
             "urls": [
@@ -38,17 +58,69 @@
                     [], 
                     null, 
                     "a1e3874ca27474010d4f17413139d893"
+                ],
+                [
+                    "GET", 
+                    "http://localhost/ImperialViolet - NPN and ALPN.html", 
+                    [], 
+                    null, 
+                    "19007d118eb1886d01a4627f9e5112c8"
+                ],
+                [
+                    "GET", 
+                    "http://localhost/pics.html", 
+                    [], 
+                    null, 
+                    "48488fafe31f8f80ea74b88da96b1984"
+                ]
+            ]
+        },
+        {
+            "enabled": false,
+            "host": "www.google.ro",
+            "port": 443,
+            "urls": [
+                [
+                    "GET", 
+                    "https://www.google.ro/",
+                    [
+                        ["accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"],
+                        ["accept-encoding", "gzip,deflate,sdch"],
+                        ["accept-language", "en-US,ro;q=0.8,fr;q=0.6"],
+                        ["dnt", "1"],
+                        ["user-agent", "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1626.5 Safari/537.36"]
+                    ],
+                    null, 
+                    null
+                ],
+                [
+                    "GET", 
+                    "https://www.google.ro/?q=spdy#q=spdy",
+                    [
+                        ["accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"],
+                        ["accept-encoding", "gzip,deflate,sdch"],
+                        ["accept-language", "en-US,ro;q=0.8,fr;q=0.6"],
+                        ["dnt", "1"],
+                        ["user-agent", "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1626.5 Safari/537.36"]
+                    ],
+                    null, 
+                    null
+                ]
+            ]
+        },
+        {
+            "enabled": false,
+            "host": "mail.google.com",
+            "port": 443,
+            "urls": [
+                [
+                    "GET", 
+                    "https://mail.google.com/mail/?tab=wm", 
+                    [], 
+                    null, 
+                    null
                 ]
             ]
         }
-    ],
-    "spdy_advertiser_port": 80,
-    "spdy_advertiser_value": "npn-spdy/3",
-    "dns_port": 53,
-    "dns_A_reply": "10.0.2.15", 
-    "tls_keyfile": "key.pem",
-    "tls_certfile": "cert.pem",
-    "tls_cafile": null,
-    "tls_capath": null,
-    "tls_npn_prot": ["spdy/3"]
+    ]
 }
