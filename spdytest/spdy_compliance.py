@@ -127,7 +127,7 @@ class FileServer(object):
     def __init__(self, rootdir='www'):
         self.rootdir = rootdir
     
-    @functools.lru_cache(maxsize=64)
+    @functools.lru_cache(maxsize=32)
     def get_file(self, file_path):
         try:
             with open(file_path, 'rb') as f:
@@ -135,7 +135,7 @@ class FileServer(object):
         except OSError:
             return None
             
-    @functools.lru_cache(maxsize=64)
+    @functools.lru_cache(maxsize=32)
     def get_dir_listing(self, path, base_url):
         try:
             list = os.listdir(path)
@@ -192,6 +192,7 @@ class FileServer(object):
 </html>
 """
 
+    @functools.lru_cache(maxsize=32)
     def get_error(self, status):
         return (status,
             (self.ERROR_MESSAGE % tuple(map(str, status))).encode(
