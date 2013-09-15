@@ -3,6 +3,7 @@
     "server_test_mode": false,
     "client_enabled": true,
     "client_test_mode": false,
+    
     "log_file_dir": "logs",
     "log_file_level": "DEBUG",
     "log_stderr_level": "WARNING",
