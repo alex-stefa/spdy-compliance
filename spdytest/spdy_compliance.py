@@ -718,7 +718,10 @@ def error_catcher(error_types=None):
 
 class MockFrame(spdy_frames.SpdyFrame):
     def __init__(self, type=0, length=0, flags=0, version=3):
-        spdy_frames.SpdyFrame.__init__(self, type, flags)
+        self.type = type
+        self.length = length
+        self.flags = flags
+        self.version = version
         self.bytes = struct.pack("!HHI",
                 0x8000 + version, type, (flags << 24) + length)
                 
@@ -726,8 +729,20 @@ class MockFrame(spdy_frames.SpdyFrame):
         return self.bytes
         
     def __str__(self):
-        return (spdy_frames.SpdyFrame.__str__(self) + 
-            ' LEN=%s]' % (len(self.bytes) - 8))
+        try:
+            str_type = spdy_frames.FrameTypes.str[self.type]
+        except KeyError:
+            str_type = str(self.type)
+        try:
+            str_flags = spdy_frames.flags_str(self.type, self.flags)
+        except KeyError:
+            str_flags = str(self.flags)
+        return '[<MOCK %s>%s V=%s LEN=%s DATA=%s]' % (
+            str_type,
+            (' ' + str_flags) if self.flags != 0 else '',
+            self.version,
+            self.length,
+            len(self.bytes) - 8)
         
 #-------------------------------------------------------------------------------
  

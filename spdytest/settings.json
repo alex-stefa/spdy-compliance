@@ -2,7 +2,7 @@
     "server_enabled": true,
     "server_test_mode": false,
     "client_enabled": true,
-    "client_test_mode": false,
+    "client_test_mode": true,
     
     "log_file_dir": "logs",
     "log_file_level": "DEBUG",
