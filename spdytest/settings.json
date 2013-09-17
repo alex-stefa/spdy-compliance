@@ -1,8 +1,8 @@
 {
-    "server_enabled": false,
+    "server_enabled": true,
     "server_test_mode": false,
     "client_enabled": true,
-    "client_test_mode": true,
+    "client_test_mode": false,
     
     "log_file_dir": "logs",
     "log_file_level": "DEBUG",
@@ -139,9 +139,13 @@
             "enabled": true,
             "host": "10.0.2.15",
             "port": 443,
-            "skip_tests": [
-            
-            ]
+            "skip_tests": []
+        },
+        {
+            "enabled": false,
+            "host": "www.google.com",
+            "port": 443,
+            "skip_tests": []
         }
     ]
 }

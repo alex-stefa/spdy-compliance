@@ -751,7 +751,7 @@ class SpdyTestCase(thor.events.EventEmitter):
         self._method = None
         self._timeout_ev = None
         self.format = runner.format
-        self.format.test('%s Running %s: %s' % (
+        self.format.test('TEST %s Running %s: %s' % (
             self.str_endpoint, 
             self.__class__.__name__, 
             self.__doc__))
@@ -772,22 +772,16 @@ class SpdyTestCase(thor.events.EventEmitter):
         
     def fail(self, message=None):
         self.is_running = False
-        self.format.error('[FAILED] %s' % (message or ''))
+        self.format.error('TEST FAILED %s' % (message or ''))
         self._clear_timeout()
         self.removeListeners()
         self.tear_down()
-        """
-        if self.session.is_active:
-            self.session.close()
-        else:
-            self.runner.next_test()
-        """
         self.session.close()
         self.runner.next_test()
         
     def success(self, message=None, close=False):
         self.is_running = False
-        self.format.test('[SUCCESS] %s' % (message or ''))
+        self.format.test('TEST SUCCESS %s' % (message or ''))
         self._clear_timeout()
         self.removeListeners()
         self.tear_down()
@@ -801,7 +795,7 @@ class SpdyTestCase(thor.events.EventEmitter):
         self.removeListeners()
         self.session = session
         self._method = getattr(self, method_name)
-        self.format.test('%s Running %s.%s: %s' % (
+        self.format.test('TEST %s Running %s.%s: %s' % (
             self.str_endpoint,
             self.__class__.__name__,
             self._method.__name__, 
@@ -884,7 +878,7 @@ class SpdyTestCase(thor.events.EventEmitter):
                         ' last stream id: %s.' % frame.last_stream_id)
                     return
                 self.success('Received GOAWAY frame'
-                    '(reason: %s, last stream id: %s).' %
+                    ' (reason: %s, last stream id: %s).' %
                     (str_reason, frame.last_stream_id), close=True)
         return ('frame', catcher, handler)
 
@@ -919,6 +913,8 @@ class SpdyTestCase(thor.events.EventEmitter):
                     (str_status, frame.stream_id))
         return ('frame', catcher, handler)
 
+#-------------------------------------------------------------------------------
+
 class PingTestCase(SpdyTestCase):
     "Tests validating ping support."
 
@@ -938,7 +934,7 @@ class PingTestCase(SpdyTestCase):
                 ping_handler)], frame)
 
     def test_ping_invalid_id(self):
-        "Check for reply to invalid ping ids."
+        "Check invalid ping ids are ignored."
         ping_id = 2012 if self.runner.is_client else 2013
         frame = spdy_frames.PingFrame(ping_id)
         def ping_handler(frame):
@@ -1002,6 +998,8 @@ class ClientTestRunner(SpdyRunner):
         self._curr_test_suite = None
         self._curr_test = None
         self._curr_session = None
+        self._curr_conn_retry = 0
+        self._max_conn_retry = 3
         self._remaining_tests = self._get_test_list()
         self._test_suite_instances = dict()
         self.next_test()
@@ -1012,30 +1010,34 @@ class ClientTestRunner(SpdyRunner):
         
         @thor.on(session, 'close')
         def on_close():
-            """
-            if self._curr_test_suite.is_running:
-                self._curr_test_suite.fail('Connection closed.')
-            else:
-                self.next_test()
-            """
-            if self._curr_test_suite:
-                self._curr_test_suite.emit('close')
+            # NOTE: connections closed by remote endpoint are preceded by
+            #   'error' events with argument spdy_error.ConnectionClosedError.
+            #   SpdyTestCases should use it to detect closed sessions. 
+            pass
         
         @thor.on(session, 'error')
         def on_error(error):
-            """
-            if isinstance(error, spdy_error.ConnectionClosedError):
-                # ignore this kind of errors because 'close' event will follow
-                pass
-            else:
-                # pass error to test suite
-                self._curr_test_suite.emit('error', error)
-            """
             if isinstance(error, spdy_error.ConnectionFailedError):
-                self.format.error('Cannot connect to test endpoint %s: %s.' %
-                    (session.origin, error))
-                assert (not session.is_active)
-                session.connect()
+                test_name = str_endpoint = ''
+                if self._curr_test:
+                    test_name = '%s.%s' % (
+                        self._curr_test[1].__name__, self._curr_test[2])
+                    str_endpoint = '[%s:%s]' % self._curr_test[0]
+                if self._curr_conn_retry < self._max_conn_retry:
+                    retry_left = self._max_conn_retry - self._curr_conn_retry
+                    self._curr_conn_retry += 1
+                    self.format.error('TEST %s Cancelling %s.'
+                        ' Cannot connect to remote endpoint: %s.'
+                        ' Retries left: %s.' %
+                        (str_endpoint, test_name, error, retry_left))
+                    session.connect()
+                else:
+                    self._curr_conn_retry = 0
+                    self.format.error('TEST %s Cancelling %s.'
+                        ' Cannot connect to remote endpoint: %s.'
+                        ' Test will be skipped.' %
+                        (str_endpoint, test_name, error))
+                    self.next_test()
             else:
                 if self._curr_test_suite:
                     self._curr_test_suite.emit('error', error)
@@ -1070,10 +1072,10 @@ class ClientTestRunner(SpdyRunner):
                     for name in test_names:
                         tests.append((origin, test_case_class, name))
         return tests
-           
+    
     def next_test(self):
         # traceback.print_stack()
-        self.format.test('NEXT TEST')
+        # self.format.test('TEST NEXT')
         if self._remaining_tests is None:
             return
         if len(self._remaining_tests) == 0:
@@ -1089,6 +1091,7 @@ class ClientTestRunner(SpdyRunner):
         if not self._curr_session.is_active:
             self._curr_session.frame_handlers.clear()
             self.setup_session(self._curr_session)
+            self._curr_conn_retry = 0
             self._curr_session.connect()
         else:
             self.run_test()
@@ -1113,6 +1116,7 @@ class ServerTestRunner(SpdyRunner):
         self.is_client = False
         self.is_server = True
         self.wait_timeout = settings['server_test_timeout']
+        raise NotImplementedError
 
 #-------------------------------------------------------------------------------
 
