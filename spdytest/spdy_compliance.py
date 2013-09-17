@@ -1035,7 +1035,7 @@ class ClientTestRunner(SpdyRunner):
                 self.format.error('Cannot connect to test endpoint %s: %s.' %
                     (session.origin, error))
                 assert (not session.is_active)
-                self.session.connect()
+                session.connect()
             else:
                 if self._curr_test_suite:
                     self._curr_test_suite.emit('error', error)

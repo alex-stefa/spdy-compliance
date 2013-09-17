@@ -1,5 +1,5 @@
 {
-    "server_enabled": true,
+    "server_enabled": false,
     "server_test_mode": false,
     "client_enabled": true,
     "client_test_mode": true,
