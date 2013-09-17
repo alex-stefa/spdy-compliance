@@ -2,7 +2,7 @@
     "server_enabled": true,
     "server_test_mode": false,
     "client_enabled": true,
-    "client_test_mode": false,
+    "client_test_mode": true,
     
     "log_file_dir": "logs",
     "log_file_level": "DEBUG",
@@ -22,7 +22,7 @@
     
     "server_host": "10.0.2.15",
     "server_port": 443,
-    "server_idle_timeout": null,
+    "server_idle_timeout": 10,
     "server_test_timeout": 5,
     "server_webroot": "www",
     "server_use_proxy": true,
@@ -43,7 +43,7 @@
     
     "client_instances": 1,
     "client_connect_timeout": 7,
-    "client_idle_timeout": 10,
+    "client_idle_timeout": 15,
     "client_http_response_timeout": null,
     "client_test_timeout": 5,
     "client_use_tls": true,

@@ -39,15 +39,16 @@ import functools
 import socket
 import hashlib
 import html
-import unittest
-import urllib
+import inspect
+import struct
 import urllib.request
 import urllib.parse
 
 import thor
+import thor.events
 import thor.spdy.error as spdy_error
 import thor.spdy.frames as spdy_frames
-import thor.spdy.common as spdy_common 
+import thor.spdy.common as spdy_common
 
 
 # TerminalColorEscapes contains strings that, when printed to a terminal, will
@@ -108,7 +109,7 @@ def setup_formatter(logger):
         session = functools.partial(_wrapper, logging.INFO, Colors.GREEN),
         status = functools.partial(_wrapper, logging.WARNING, Colors.BOLD),
         notify = functools.partial(_wrapper, logging.WARNING, Colors.BLUE),
-        test = functools.partial(_wrapper, logging.WARNING, Colors.CYAN))
+        test = functools.partial(_wrapper, logging.ERROR, Colors.CYAN))
         
 def setup_tls_config(settings):
     return thor.TlsConfig(
@@ -352,7 +353,7 @@ class SpdyRunner(multiprocessing.Process):
         self.settings = settings
         
     def setup(self): # to be implemented by inheriting classes
-        raise NotImplementedError
+        pass
         
     def run(self):
         self.format = setup_formatter(setup_logger(self.settings))
@@ -400,6 +401,7 @@ class SpdyRunner(multiprocessing.Process):
             
         @thor.on(session, 'close')
         def on_close():
+            # traceback.print_stack()
             self.format.session('SESSION [%s] CLOSED' % 
                 session.origin)
 
@@ -613,7 +615,7 @@ class ClientRunner(SpdyRunner):
         
     def do_request(self, session, method, uri, headers, body, checksum):
         exchange = session.exchange()
-        # NOTE: this is a basic check; we expect quoted URLs in the settings file
+        # NOTE: this is a basic check; ideally we expect quoted URLs in the settings file
         if ' ' in uri:
             parts = urllib.parse.urlsplit(uri)
             uri = urllib.parse.urlunsplit((
@@ -697,86 +699,408 @@ class ClientRunner(SpdyRunner):
         
 #-------------------------------------------------------------------------------
 
-def wait_for(session, event_map, timeout=None):
-    t_event = threading.Event()
-    result = list()
-    listener_map = dict()
-    
-    for (event, predicate) in event_map.items():
-        def on_event(*args):
-            print('envent: %s, args: %s' % (event, args)) 
-            if predicate(args): 
-                print('is true')
-                result.append((event, args))
-                t_event.set()
-        listener_map[event] = on_event
-        session.on(event, on_event)
-
-    t_event.wait(timeout)
-    
-    for event in event_map.keys():
-        session.removeListener(event, listener_map[event])
-        pass
-        
-    assert len(result) <= 1, 'More than one event has been matched'
-    return None if len(result) == 0 else result[0]
-
-
-#class SpdyTestCase(unittest.TestCase):
-class SpdyTestCase():
-    
-    def __init__(self, runner, origin):
-        #unittest.TestCase.__init__(self, methodName='runTest')
-        self.runner = runner
-        self.origin = origin
-        self.session = None
-        self.format = runner.format
-    
-    def send_and_wait_for_frame(self, out_frame, in_frame_types):
-        self.session._queue_frame(out_frame, 0)
-        if not in_frame_types:
-            event_map = {'frame': (lambda frame: True)}
+def frame_catcher(frame_types=None):
+    if frame_types is None:
+        return (lambda frame: True)
+    else:
+        sample = frame_types[0]
+        if isinstance(sample, int):
+            return (lambda frame: frame.type in frame_types)
         else:
-            sample = in_frame_types[0]
-            if isinstance(sample, int):
-                event_map = {'frame': 
-                    (lambda frame: frame.type in in_frame_types)}
-            else:
-                event_map = {'frame': 
-                    (lambda frame: type(frame) in in_frame_types)}
-        return wait_for(self.session, event_map, self.runner.wait_timeout)
+            return (lambda frame: type(frame) in frame_types)
+
+def error_catcher(error_types=None):
+    if error_types is None:
+        return (lambda error: True)
+    else:
+        return (lambda error: type(error) in error_types)
+
+
+class MockFrame(spdy_frames.SpdyFrame):
+    def __init__(self, type=0, length=0, flags=0, version=3):
+        spdy_frames.SpdyFrame.__init__(self, type, flags)
+        self.bytes = struct.pack("!HHI",
+                0x8000 + version, type, (flags << 24) + length)
+                
+    def serialize(self, context):
+        return self.bytes
         
-    def setUp(self):
-        self.format.test('setUp')
-        self.session = self.runner.get_session(self.origin)
+    def __str__(self):
+        return (spdy_frames.SpdyFrame.__str__(self) + 
+            ' LEN=%s]' % (len(self.bytes) - 8))
         
-    def tearDown(self):
-        self.format.test('tearDown')
-        pass
-
-    
-class PingTestCase(SpdyTestCase):
-
-    def runTest(self):
-        self.setUp()
-        self.test_ping()
-        self.tearDown()
-    
-    def test_ping(self):
-        self.format.test('running test_ping')
-        frame = spdy_frames.PingFrame(5)
-        reply = self.send_and_wait_for_frame(frame, [spdy_frames.PingFrame])
-        self.format.test('reply: %s' % reply)
-
-    def run(self):
-        self.runTest()
+#-------------------------------------------------------------------------------
  
+class SpdyTestCase(thor.events.EventEmitter):
+    """
+    A collection of individual test methods.
+    
+    Event handlers that can be added:
+        frame(frame)
+        error(error)
+        timeout()
+    """
+    test_prefix = 'test_'
+    
+    def __init__(self, runner, endpoint):
+        thor.events.EventEmitter.__init__(self)
+        self.runner = runner
+        self.endpoint = endpoint
+        self.session = None
+        self.is_running = False
+        self._method = None
+        self._timeout_ev = None
+        self.format = runner.format
+        self.format.test('%s Running %s: %s' % (
+            self.str_endpoint, 
+            self.__class__.__name__, 
+            self.__doc__))
+        
+    @property
+    def str_endpoint(self):
+        return '[%s:%s]' % self.endpoint
+        
+    def set_up(self):
+        pass
+        
+    def tear_down(self):
+        pass
+        
+    @classmethod
+    def set_up_class(cls):
+        pass
+        
+    def fail(self, message=None):
+        self.is_running = False
+        self.format.error('[FAILED] %s' % (message or ''))
+        self._clear_timeout()
+        self.removeListeners()
+        self.tear_down()
+        """
+        if self.session.is_active:
+            self.session.close()
+        else:
+            self.runner.next_test()
+        """
+        self.session.close()
+        self.runner.next_test()
+        
+    def success(self, message=None, close=False):
+        self.is_running = False
+        self.format.test('[SUCCESS] %s' % (message or ''))
+        self._clear_timeout()
+        self.removeListeners()
+        self.tear_down()
+        if close:
+            self.session.close()
+        self.runner.next_test()
+        
+    def run_test(self, session, method_name):
+        self.is_running = True
+        self._clear_timeout()
+        self.removeListeners()
+        self.session = session
+        self._method = getattr(self, method_name)
+        self.format.test('%s Running %s.%s: %s' % (
+            self.str_endpoint,
+            self.__class__.__name__,
+            self._method.__name__, 
+            self._method.__doc__))
+        self.set_up()
+        self._method()
+        
+    def _set_timeout(self, fail_on_timeout=True):
+        if self.runner.wait_timeout and self._timeout_ev is None:
+            self._timeout_ev = self.session._loop.schedule(
+                self.runner.wait_timeout, 
+                self._handle_timeout,
+                fail_on_timeout)
+    
+    def _clear_timeout(self):
+        if self._timeout_ev:
+            self._timeout_ev.delete()
+            self._timeout_ev = None
+
+    def _handle_timeout(self, is_fail):
+        msg = 'Timed out %ss waiting for event.' % self.runner.wait_timeout
+        if is_fail:
+            self.fail(msg)
+        else:
+            self.success(msg)
+        
+    @classmethod
+    def get_test_names(cls):
+        methods = inspect.getmembers(cls, inspect.isfunction)
+        return [name for (name, value) in methods 
+            if name.startswith(cls.test_prefix)]
+            
+    def send_and_catch(self, events=[], frame=None, 
+        priority=spdy_frames.Priority.MIN, fail_on_timeout=True):
+        if frame is not None:
+            self.session._queue_frame(frame, priority)
+        self._clear_timeout()
+        self.removeListeners()
+        self._set_timeout(fail_on_timeout)
+        if events:
+            for (event, pred, handler) in events:
+                def on_event(*args, x_pred=pred, x_handler=handler):
+                    if x_pred(*args):
+                        self._clear_timeout()
+                        self.removeListeners()
+                        x_handler(*args)
+                self.on(event, on_event)
+
+    def error_fail_event(self):
+        catcher = error_catcher()
+        def handler(error):
+            self.fail('Unexpected error: %s' % error)
+        return ('error', catcher, handler)
+        
+    def goaway_event(self, reasons=None, last_stream_id=None, strict=True):
+        if strict:
+            catcher = frame_catcher([
+                spdy_frames.FrameTypes.GOAWAY, 
+                spdy_frames.FrameTypes.RST_STREAM,
+                spdy_frames.FrameTypes.DATA,
+                spdy_frames.FrameTypes.SYN_STREAM,
+                spdy_frames.FrameTypes.SYN_REPLY,
+                spdy_frames.FrameTypes.HEADERS])
+        else:
+            catcher = frame_catcher([
+                spdy_frames.FrameTypes.GOAWAY])
+        def handler(frame):
+            if frame.type != spdy_frames.FrameTypes.GOAWAY:
+                self.fail('Expecting GOAWAY frame, received %s.' %
+                    spdy_frames.FrameTypes.str[frame.type])
+            else:
+                str_reason = spdy_frames.GoawayReasons.str[frame.reason]
+                if (reasons is not None) and (frame.reason not in reasons):
+                    self.fail('Received GOAWAY frame with unexpected'
+                        ' reason: %s.' % str_reason)
+                    return
+                if ((last_stream_id is not None) and 
+                    (frame.last_stream_id != last_stream_id)):
+                    self.fail('Received GOAWAY frame with unexpected'
+                        ' last stream id: %s.' % frame.last_stream_id)
+                    return
+                self.success('Received GOAWAY frame'
+                    '(reason: %s, last stream id: %s).' %
+                    (str_reason, frame.last_stream_id), close=True)
+        return ('frame', catcher, handler)
+
+    def rst_stream_event(self, codes=None, stream_id=None, strict=True):
+        if strict:
+            catcher = frame_catcher([
+                spdy_frames.FrameTypes.GOAWAY, 
+                spdy_frames.FrameTypes.RST_STREAM,
+                spdy_frames.FrameTypes.DATA,
+                spdy_frames.FrameTypes.SYN_STREAM,
+                spdy_frames.FrameTypes.SYN_REPLY,
+                spdy_frames.FrameTypes.HEADERS])
+        else:
+            catcher = frame_catcher([
+                spdy_frames.FrameTypes.RST_STREAM])
+        def handler(frame):
+            if frame.type != spdy_frames.FrameTypes.RST_STREAM:
+                self.fail('Expecting RST_STREAM frame, received %s.' %
+                    spdy_frames.FrameTypes.str[frame.type])
+            else:
+                str_status = spdy_frames.StatusCodes.str[frame.status]
+                if (codes is not None) and (frame.status not in codes):
+                    self.fail('Received RST_STREAM frame with unexpected'
+                        ' status code: %s.' % str_status)
+                    return
+                if (stream_id is not None) and (frame.stream_id != stream_id):
+                    self.fail('Received RST_STREAM frame with unexpected'
+                        ' stream id: %s.' % frame.stream_id)
+                    return
+                self.success('Received RST_STREAM frame'
+                    '(status: %s, stream id: %s).' %
+                    (str_status, frame.stream_id))
+        return ('frame', catcher, handler)
+
+class PingTestCase(SpdyTestCase):
+    "Tests validating ping support."
+
+    def test_ping_reply(self):
+        "Check for replies to PING frames."
+        ping_id = 2013 if self.runner.is_client else 2012
+        frame = spdy_frames.PingFrame(ping_id)
+        def ping_handler(frame):
+            if frame.ping_id != ping_id:
+                self.fail('Received PING frame with unexpected ping id: %s' %
+                    frame.ping_id)
+            else:
+                self.success('Received correct PING reply.')
+        self.format.test('Sending PING frame with id: %s.' % ping_id)
+        self.send_and_catch([self.error_fail_event(),
+            ('frame', frame_catcher([spdy_frames.FrameTypes.PING]), 
+                ping_handler)], frame)
+
+    def test_ping_invalid_id(self):
+        "Check for reply to invalid ping ids."
+        ping_id = 2012 if self.runner.is_client else 2013
+        frame = spdy_frames.PingFrame(ping_id)
+        def ping_handler(frame):
+            self.fail('Received PING reply to an invalid ping id: %s' %  
+                ping_id)
+        self.format.test('Sending PING frame with id: %s.' % ping_id)
+        self.send_and_catch([self.error_fail_event(),
+            ('frame', frame_catcher([spdy_frames.FrameTypes.PING]), 
+                ping_handler)], frame, fail_on_timeout=False)
+    
+    @classmethod
+    def set_up_class(cls):
+        valid_len = spdy_frames.MinFrameLen[spdy_frames.FrameTypes.PING]
+        for size in range(valid_len * 2):
+            if size == valid_len:
+                continue
+            def test_case(self, x_size=size):
+                "Expect GOAWAY after invalid PING frame size."
+                frame = MockFrame(spdy_frames.FrameTypes.PING, x_size)
+                self.send_and_catch(
+                    [self.goaway_event(), self.error_fail_event()], frame)
+            name = 'test_ping_length_%s' % size
+            test_case.__name__ = name
+            setattr(cls, name, test_case)
+
 #-------------------------------------------------------------------------------
 
-TEST_CASES = [
+COMMON_TEST_CASES = [
     PingTestCase
 ]
 
+CLIENT_TEST_CASES = COMMON_TEST_CASES + [
+]
+
+SERVER_TEST_CASES = COMMON_TEST_CASES + [
+]
+ 
+#-------------------------------------------------------------------------------
+
+class ClientTestRunner(SpdyRunner):
+    _base_name = 'CLIENT-TEST'
+    _instances = 0
+
+    def __init__(self, settings, name=None):
+        SpdyRunner.__init__(self, settings, name)
+        self.tls_config = None
+        self.is_client = True
+        self.is_server = False
+        self.wait_timeout = settings['client_test_timeout']
+        
+    def setup(self):
+        self.format.status('ClientTestRunner PID: %s' % os.getpid())
+        if self.settings['client_use_tls']:
+            self.tls_config = setup_tls_config(self.settings)
+        self.client = thor.SpdyClient(
+            connect_timeout=self.settings['client_connect_timeout'],
+            read_timeout=None,
+            idle_timeout=None,
+            tls_config=self.tls_config,
+            loop=self.loop)
+        self._curr_test_suite = None
+        self._curr_test = None
+        self._curr_session = None
+        self._remaining_tests = self._get_test_list()
+        self._test_suite_instances = dict()
+        self.next_test()
+        
+    def setup_session(self, session):
+        session.removeListeners()
+        SpdyRunner.setup_session(self, session)
+        
+        @thor.on(session, 'close')
+        def on_close():
+            """
+            if self._curr_test_suite.is_running:
+                self._curr_test_suite.fail('Connection closed.')
+            else:
+                self.next_test()
+            """
+            if self._curr_test_suite:
+                self._curr_test_suite.emit('close')
+        
+        @thor.on(session, 'error')
+        def on_error(error):
+            """
+            if isinstance(error, spdy_error.ConnectionClosedError):
+                # ignore this kind of errors because 'close' event will follow
+                pass
+            else:
+                # pass error to test suite
+                self._curr_test_suite.emit('error', error)
+            """
+            if isinstance(error, spdy_error.ConnectionFailedError):
+                self.format.error('Cannot connect to test endpoint %s: %s.' %
+                    (session.origin, error))
+                assert (not session.is_active)
+                self.session.connect()
+            else:
+                if self._curr_test_suite:
+                    self._curr_test_suite.emit('error', error)
+                            
+        @thor.on(session, 'bound')
+        def on_bound(tcp_conn):
+            self.run_test()
+        
+        @thor.on(session, 'frame')
+        def on_frame(frame):
+            if self._curr_test_suite:
+                self._curr_test_suite.emit('frame', frame)
+
+    def _get_test_suite_instance(self, cls, endpoint):
+        try:
+            suite = self._test_suite_instances[(cls, endpoint)]
+        except KeyError:
+            suite = cls(self, endpoint)
+            self._test_suite_instances[(cls, endpoint)] = suite
+        return suite
+    
+    def _get_test_list(self):
+        tests = list()
+        for entry in self.settings['client_test_endpoints']:
+            if not entry['enabled']:
+                continue
+            origin = (entry['host'], entry['port'])
+            for test_case_class in SERVER_TEST_CASES:
+                if test_case_class.__name__ not in entry["skip_tests"]:
+                    test_case_class.set_up_class()
+                    test_names = test_case_class.get_test_names()
+                    for name in test_names:
+                        tests.append((origin, test_case_class, name))
+        return tests
+           
+    def next_test(self):
+        # traceback.print_stack()
+        self.format.test('NEXT TEST')
+        if self._remaining_tests is None:
+            return
+        if len(self._remaining_tests) == 0:
+            self.format.test('All tests done!')
+            self._remaining_tests = None
+            self._curr_test_suite = None
+            self._curr_test = None
+            self._curr_session = None
+            return
+        self._curr_test = self._remaining_tests[0]
+        self._remaining_tests = self._remaining_tests[1:]
+        self._curr_session = self.client.session(self._curr_test[0])
+        if not self._curr_session.is_active:
+            self._curr_session.frame_handlers.clear()
+            self.setup_session(self._curr_session)
+            self._curr_session.connect()
+        else:
+            self.run_test()
+            
+    def run_test(self):
+        if self._curr_test is None:
+            return
+        self._curr_test_suite = self._get_test_suite_instance(
+            self._curr_test[1], self._curr_test[0])
+        self._curr_test_suite.run_test(
+            self._curr_session, self._curr_test[2])          
+                         
 #-------------------------------------------------------------------------------
 
 class ServerTestRunner(SpdyRunner):
@@ -790,65 +1114,6 @@ class ServerTestRunner(SpdyRunner):
         self.is_server = True
         self.wait_timeout = settings['server_test_timeout']
 
-
-#-------------------------------------------------------------------------------
-
-class ClientTestRunner(SpdyRunner):
-    _base_name = 'CLIENT-TEST'
-    _instances = 0
-
-    def __init__(self, settings, name=None):
-        SpdyRunner.__init__(self, settings, name)
-        self.tls_config = None
-        self.is_client = True
-        self.is_server = False
-        self.wait_timeout = settings['client_test_timeout']
-
-    #TODO: add auto test failer on 'error'
-    
-    def get_session(self, origin):
-        session = self.client.session(origin, self.setup_session)
-        self.format.session('SESSION NEW %s' % session)
-        self.setup_session(session)
-        session.connect()
-        return session
-    
-    def setup(self):
-        self.format.status('ClientTestRunner PID: %s' % os.getpid())
-        if self.settings['client_use_tls']:
-            self.tls_config = setup_tls_config(self.settings)
-        self.client = thor.SpdyClient(
-            connect_timeout=self.settings['client_connect_timeout'],
-            read_timeout=None,
-            idle_timeout=None,
-            tls_config=self.tls_config,
-            loop=self.loop)
-        tester = TesterThread(self, settings['client_test_endpoints'])
-        tester.start()
-        #tester.run()
-                    
-
-class TesterThread(threading.Thread):
-#class TesterThread():
-    
-    def __init__(self, runner, endpoints):
-        threading.Thread.__init__(self)
-        self.runner = runner
-        self.endpoints = endpoints
-        self.format = runner.format
-        
-    def run(self):
-        for entry in self.endpoints:
-            if not entry['enabled']:
-                continue
-            origin = (entry['host'], entry['port'])
-            for test_case_class in TEST_CASES:
-                if test_case_class.__name__ not in entry["skip_tests"]:
-                    test_case = test_case_class(self.runner, origin)
-                    test_case.run()
-        
-            
-         
 #-------------------------------------------------------------------------------
 
 if __name__ == "__main__":
