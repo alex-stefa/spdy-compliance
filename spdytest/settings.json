@@ -6,7 +6,7 @@
     
     "log_file_dir": "logs",
     "log_file_level": "DEBUG",
-    "log_stderr_level": "WARNING",
+    "log_stderr_level": "DEBUG",
     
     "spdy_advertiser_port": 80,
     "spdy_advertiser_value": "npn-spdy/3",
@@ -23,6 +23,7 @@
     "server_host": "10.0.2.15",
     "server_port": 443,
     "server_idle_timeout": null,
+    "server_test_timeout": 5,
     "server_webroot": "www",
     "server_use_proxy": true,
     "server_use_dns": false,
@@ -44,6 +45,7 @@
     "client_connect_timeout": 7,
     "client_idle_timeout": 10,
     "client_http_response_timeout": null,
+    "client_test_timeout": 5,
     "client_use_tls": true,
     "client_urls": [
         {
@@ -129,6 +131,16 @@
                     "body": null, 
                     "md5": null
                 }
+            ]
+        }
+    ],
+    "client_test_endpoints": [
+        {
+            "enabled": true,
+            "host": "10.0.2.15",
+            "port": 443,
+            "skip_tests": [
+            
             ]
         }
     ]

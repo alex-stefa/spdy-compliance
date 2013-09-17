@@ -27,19 +27,22 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
-
 import os
 import sys
 import json
 import logging
+import threading
 import multiprocessing
+import traceback
 import time
 import functools
 import socket
 import hashlib
-from urllib.parse import urlsplit, urlunsplit, quote
-from urllib.request import url2pathname
-from html import escape
+import html
+import unittest
+import urllib
+import urllib.request
+import urllib.parse
 
 import thor
 import thor.spdy.error as spdy_error
@@ -143,7 +146,7 @@ class FileServer(object):
             return self.get_error((403, 'Forbidden'))
         list.sort(key=lambda a: a.lower())
         r = []
-        displaypath = escape(base_url)
+        displaypath = html.escape(base_url)
         enc = sys.getfilesystemencoding()
         title = 'Directory listing for %s' % displaypath
         r.append('<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" '
@@ -154,7 +157,7 @@ class FileServer(object):
         r.append('<title>%s</title>\n</head>' % title)
         r.append('<body>\n<h1>%s</h1>' % title)
         r.append('<hr>\n<ul>')
-        upperlink = quote(base_url.rsplit('/', 2)[0] + '/')
+        upperlink = urllib.parse.quote(base_url.rsplit('/', 2)[0] + '/')
         r.append('<li><a href="%s">[..]</a></li>' % upperlink)
         for name in list:
             fullname = os.path.join(path, name)
@@ -169,8 +172,8 @@ class FileServer(object):
                 displayname = name + '@'
                 size = 'link'
             size = '<i>' + size + '</i>'
-            r.append('<li><a href="%s">%s</a>&nbsp;&nbsp;%s</li>'
-                    % (quote(linkname), escape(displayname), size))
+            r.append('<li><a href="%s">%s</a>&nbsp;&nbsp;%s</li>' % (
+                urllib.parse.quote(linkname), html.escape(displayname), size))
         r.append('</ul>\n<hr>\n</body>\n</html>\n')
         encoded = '\n'.join(r).encode(enc)
         headers = [
@@ -202,7 +205,7 @@ class FileServer(object):
     def handle_request(self, hdr_dict):
         if hdr_dict.method.lower() != 'get':
             return self.get_error((501, 'Not Implemented'))
-        path = url2pathname(hdr_dict.path_split[0])
+        path = urllib.request.url2pathname(hdr_dict.path_split[0])
         if path[0] != '/':
             return self.get_error((400, 'Bad Request'))
         path = path[1:]
@@ -343,22 +346,17 @@ class SpdyRunner(multiprocessing.Process):
     
     def __init__(self, settings, name=None):
         type(self)._instances += 1
-        if not name:
+        if name is None:
             name = '%s-%d' % (self._base_name, self._instances)
         multiprocessing.Process.__init__(self, name=name)
         self.settings = settings
-        self.tls_config = None
-        
-    def _setup(self):
-        self.format = setup_formatter(setup_logger(self.settings))
-        self.loop = thor.loop.make()
-        self.frame_buff = list()
         
     def setup(self): # to be implemented by inheriting classes
-        pass
+        raise NotImplementedError
         
     def run(self):
-        self._setup()
+        self.format = setup_formatter(setup_logger(self.settings))
+        self.loop = thor.loop.make()
         self.setup()
         try:
             self.loop.run()
@@ -366,11 +364,9 @@ class SpdyRunner(multiprocessing.Process):
             pass
             
     def setup_session(self, session):
-        session.frame_buff = list()
     
         @thor.on(session, 'frame')
         def on_frame(frame):  
-            session.frame_buff.append(frame)
             self.format.frame('SESSION [%s] FRAME-IN %s' % 
                 (session.origin, frame)) 
             
@@ -381,6 +377,7 @@ class SpdyRunner(multiprocessing.Process):
 
         @thor.on(session, 'error')
         def on_error(error):
+            # traceback.print_stack()
             self.format.error('SESSION [%s] ERROR %s' % 
                 (session.origin, error)) 
         
@@ -405,7 +402,7 @@ class SpdyRunner(multiprocessing.Process):
         def on_close():
             self.format.session('SESSION [%s] CLOSED' % 
                 session.origin)
-    
+
 #-------------------------------------------------------------------------------
 
 class ServerRunner(SpdyRunner):
@@ -420,6 +417,7 @@ class ServerRunner(SpdyRunner):
         if self.settings['server_use_dns']:
             self.pdns = SimpleDNS(self.settings)
             self.pdns.start()
+        self.tls_config = None
         
     def setup(self):
         self.format.status('ServerRunner PID: %s' % os.getpid())
@@ -489,7 +487,8 @@ class ServerRunner(SpdyRunner):
                 exchange.response_start(res_hdrs, res_status)
                 exchange.response_body(res_body)
                 if res_status[1] == 'OK':
-                    req_path = url2pathname(exchange.req_hdrs.path_split[0])[1:]
+                    req_path = urllib.request.url2pathname(
+                        exchange.req_hdrs.path_split[0])[1:]
                     push_paths = self.settings['server_push_map'].get(
                         req_path, []) 
                     for push_entry in push_paths:
@@ -513,10 +512,10 @@ class ServerRunner(SpdyRunner):
                             
                             self.format.exchange('EXCHG PUSHED %s' % 
                                 push_exchg)
-                            push_uri = urlunsplit((
+                            push_uri = urllib.parse.urlunsplit((
                                 exchange.req_hdrs.scheme,
                                 exchange.req_hdrs.authority,
-                                quote(push_path), '', ''))
+                                urllib.parse.quote(push_path), '', ''))
                             self.format.notify('PUSH RESPONSE %s for %s' % 
                                 (file_path, exchange.req_hdrs.uri))
                             push_exchg.response_start(None, uri=push_uri)
@@ -589,6 +588,7 @@ class ClientRunner(SpdyRunner):
     
     def __init__(self, settings, name=None):
         SpdyRunner.__init__(self, settings, name)
+        self.tls_config = None
         
     def setup(self):
         self.format.status('ClientRunner PID: %s' % os.getpid())
@@ -606,6 +606,7 @@ class ClientRunner(SpdyRunner):
             session = self.client.session((entry['host'], entry['port']))
             self.format.session('SESSION NEW %s' % session)
             self.setup_session(session)
+            session.connect()
             for url in  entry['urls']:
                 self.do_request(session, url["method"], url["url"], 
                     url["headers"], url["body"], url["md5"])
@@ -614,9 +615,13 @@ class ClientRunner(SpdyRunner):
         exchange = session.exchange()
         # NOTE: this is a basic check; we expect quoted URLs in the settings file
         if ' ' in uri:
-            parts = urlsplit(uri)
-            uri = urlunsplit((parts[0], parts[1], quote(parts[2]), 
-                quote(parts[3]), quote(parts[4])))
+            parts = urllib.parse.urlsplit(uri)
+            uri = urllib.parse.urlunsplit((
+                parts[0], 
+                parts[1], 
+                urllib.parse.quote(parts[2]), 
+                urllib.parse.quote(parts[3]), 
+                urllib.parse.quote(parts[4])))
         self.format.notify('REQUEST %s %s' % (method, uri))
         self.setup_exchange(exchange)
         exchange.checksum = checksum
@@ -692,12 +697,99 @@ class ClientRunner(SpdyRunner):
         
 #-------------------------------------------------------------------------------
 
+def wait_for(session, event_map, timeout=None):
+    t_event = threading.Event()
+    result = list()
+    listener_map = dict()
+    
+    for (event, predicate) in event_map.items():
+        def on_event(*args):
+            print('envent: %s, args: %s' % (event, args)) 
+            if predicate(args): 
+                print('is true')
+                result.append((event, args))
+                t_event.set()
+        listener_map[event] = on_event
+        session.on(event, on_event)
+
+    t_event.wait(timeout)
+    
+    for event in event_map.keys():
+        session.removeListener(event, listener_map[event])
+        pass
+        
+    assert len(result) <= 1, 'More than one event has been matched'
+    return None if len(result) == 0 else result[0]
+
+
+#class SpdyTestCase(unittest.TestCase):
+class SpdyTestCase():
+    
+    def __init__(self, runner, origin):
+        #unittest.TestCase.__init__(self, methodName='runTest')
+        self.runner = runner
+        self.origin = origin
+        self.session = None
+        self.format = runner.format
+    
+    def send_and_wait_for_frame(self, out_frame, in_frame_types):
+        self.session._queue_frame(out_frame, 0)
+        if not in_frame_types:
+            event_map = {'frame': (lambda frame: True)}
+        else:
+            sample = in_frame_types[0]
+            if isinstance(sample, int):
+                event_map = {'frame': 
+                    (lambda frame: frame.type in in_frame_types)}
+            else:
+                event_map = {'frame': 
+                    (lambda frame: type(frame) in in_frame_types)}
+        return wait_for(self.session, event_map, self.runner.wait_timeout)
+        
+    def setUp(self):
+        self.format.test('setUp')
+        self.session = self.runner.get_session(self.origin)
+        
+    def tearDown(self):
+        self.format.test('tearDown')
+        pass
+
+    
+class PingTestCase(SpdyTestCase):
+
+    def runTest(self):
+        self.setUp()
+        self.test_ping()
+        self.tearDown()
+    
+    def test_ping(self):
+        self.format.test('running test_ping')
+        frame = spdy_frames.PingFrame(5)
+        reply = self.send_and_wait_for_frame(frame, [spdy_frames.PingFrame])
+        self.format.test('reply: %s' % reply)
+
+    def run(self):
+        self.runTest()
+ 
+#-------------------------------------------------------------------------------
+
+TEST_CASES = [
+    PingTestCase
+]
+
+#-------------------------------------------------------------------------------
+
 class ServerTestRunner(SpdyRunner):
     _base_name = 'SERVER-TEST'
     _instances = 0
 
     def __init__(self, settings, name=None):
         SpdyRunner.__init__(self, settings, name)
+        self.tls_config = None
+        self.is_client = False
+        self.is_server = True
+        self.wait_timeout = settings['server_test_timeout']
+
 
 #-------------------------------------------------------------------------------
 
@@ -707,7 +799,56 @@ class ClientTestRunner(SpdyRunner):
 
     def __init__(self, settings, name=None):
         SpdyRunner.__init__(self, settings, name)
+        self.tls_config = None
+        self.is_client = True
+        self.is_server = False
+        self.wait_timeout = settings['client_test_timeout']
 
+    #TODO: add auto test failer on 'error'
+    
+    def get_session(self, origin):
+        session = self.client.session(origin, self.setup_session)
+        self.format.session('SESSION NEW %s' % session)
+        self.setup_session(session)
+        session.connect()
+        return session
+    
+    def setup(self):
+        self.format.status('ClientTestRunner PID: %s' % os.getpid())
+        if self.settings['client_use_tls']:
+            self.tls_config = setup_tls_config(self.settings)
+        self.client = thor.SpdyClient(
+            connect_timeout=self.settings['client_connect_timeout'],
+            read_timeout=None,
+            idle_timeout=None,
+            tls_config=self.tls_config,
+            loop=self.loop)
+        tester = TesterThread(self, settings['client_test_endpoints'])
+        tester.start()
+        #tester.run()
+                    
+
+class TesterThread(threading.Thread):
+#class TesterThread():
+    
+    def __init__(self, runner, endpoints):
+        threading.Thread.__init__(self)
+        self.runner = runner
+        self.endpoints = endpoints
+        self.format = runner.format
+        
+    def run(self):
+        for entry in self.endpoints:
+            if not entry['enabled']:
+                continue
+            origin = (entry['host'], entry['port'])
+            for test_case_class in TEST_CASES:
+                if test_case_class.__name__ not in entry["skip_tests"]:
+                    test_case = test_case_class(self.runner, origin)
+                    test_case.run()
+        
+            
+         
 #-------------------------------------------------------------------------------
 
 if __name__ == "__main__":
